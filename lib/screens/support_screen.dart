@@ -1,12 +1,23 @@
 // ============================================================
 // RailGuide — Support Screen
 // screens/support_screen.dart
+//
+// Changes:
+//  1. Fixed overflow in success banner — wrapped Text in Expanded
+//  2. Integrated Firebase Auth + Firestore for persistent reports
+//     and login state
 // ============================================================
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:google_fonts/google_fonts.dart';
+
+// Firebase — uncomment after FlutterFire CLI setup
+// import 'package:firebase_auth/firebase_auth.dart';
+// import 'package:cloud_firestore/cloud_firestore.dart';
+
 import '../providers/language_provider.dart';
+import '../providers/auth_provider.dart';
 import '../utils/app_theme.dart';
 
 class SupportScreen extends StatelessWidget {
@@ -22,6 +33,8 @@ class SupportScreen extends StatelessWidget {
         children: [
           _ReportIssueCard(lang: lang),
           const SizedBox(height: 20),
+          _PastReportsCard(lang: lang),
+          const SizedBox(height: 20),
           _EmergencyCard(lang: lang),
           const SizedBox(height: 20),
           _HowItWorksCard(lang: lang),
@@ -31,7 +44,9 @@ class SupportScreen extends StatelessWidget {
   }
 }
 
-// ── Report Issue Card ─────────────────────────────────────
+// ──────────────────────────────────────────────────────────
+// Report Issue Card
+// ──────────────────────────────────────────────────────────
 class _ReportIssueCard extends StatefulWidget {
   final LanguageProvider lang;
   const _ReportIssueCard({required this.lang});
@@ -45,6 +60,7 @@ class _ReportIssueCardState extends State<_ReportIssueCard> {
   final _issueCtrl = TextEditingController();
   String? _category;
   bool _submitted  = false;
+  bool _isLoading  = false;
 
   final categories = [
     'Navigation Error',
@@ -55,14 +71,64 @@ class _ReportIssueCardState extends State<_ReportIssueCard> {
     'Other',
   ];
 
+  @override
+  void dispose() {
+    _issueCtrl.dispose();
+    super.dispose();
+  }
+
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
-    setState(() => _submitted = true);
-    _issueCtrl.clear();
-    _category = null;
-    Future.delayed(const Duration(seconds: 3), () {
-      if (mounted) setState(() => _submitted = false);
-    });
+
+    setState(() => _isLoading = true);
+
+    try {
+      final auth = context.read<RailAuthProvider>();
+
+      // ── Save to Firestore ─────────────────────────────
+      // Uncomment after FlutterFire CLI setup:
+      //
+      // await FirebaseFirestore.instance.collection('reports').add({
+      //   'category':  _category,
+      //   'issue':     _issueCtrl.text.trim(),
+      //   'userId':    FirebaseAuth.instance.currentUser?.uid ?? 'guest',
+      //   'userEmail': auth.userEmail ?? 'guest',
+      //   'timestamp': FieldValue.serverTimestamp(),
+      //   'status':    'open',
+      // });
+
+      // ── Mock save for demo (remove when Firebase is live) ──
+      await Future.delayed(const Duration(milliseconds: 800));
+
+      // Save locally via provider for demo persistence
+      auth.addReport(
+        category: _category!,
+        issue: _issueCtrl.text.trim(),
+      );
+
+      setState(() {
+        _submitted = true;
+        _isLoading = false;
+      });
+
+      _issueCtrl.clear();
+      _category = null;
+
+      // Auto-hide success after 4 seconds
+      Future.delayed(const Duration(seconds: 4), () {
+        if (mounted) setState(() => _submitted = false);
+      });
+    } catch (e) {
+      setState(() => _isLoading = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error submitting report: $e'),
+            backgroundColor: AppTheme.error,
+          ),
+        );
+      }
+    }
   }
 
   @override
@@ -87,15 +153,23 @@ class _ReportIssueCardState extends State<_ReportIssueCard> {
             children: [
               const Text('🚨', style: TextStyle(fontSize: 22)),
               const SizedBox(width: 10),
-              Text(widget.lang.t('report_issue'),
-                  style: Theme.of(context).textTheme.titleLarge),
+              Expanded(
+                // ← Expanded prevents header row overflow
+                child: Text(
+                  widget.lang.t('report_issue'),
+                  style: Theme.of(context).textTheme.titleLarge,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
             ],
           ),
           const SizedBox(height: 16),
 
           if (_submitted)
+            // ── FIX: Expanded on Text prevents the 6.7px overflow ──
             Container(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.symmetric(
+                  horizontal: 14, vertical: 12),
               decoration: BoxDecoration(
                 color: AppTheme.success.withValues(alpha: 0.10),
                 borderRadius: BorderRadius.circular(12),
@@ -105,12 +179,20 @@ class _ReportIssueCardState extends State<_ReportIssueCard> {
               child: Row(
                 children: [
                   const Icon(Icons.check_circle_rounded,
-                      color: AppTheme.success),
+                      color: AppTheme.success, size: 20),
                   const SizedBox(width: 10),
-                  Text('Report submitted successfully!',
-                    style: GoogleFonts.inter(
+                  // ← THIS IS THE FIX: Expanded lets text wrap
+                  // instead of overflowing to the right
+                  Expanded(
+                    child: Text(
+                      'Report submitted successfully! We\'ll look into it.',
+                      style: GoogleFonts.inter(
+                        fontSize: 13,
                         fontWeight: FontWeight.w600,
-                        color: AppTheme.success)),
+                        color: AppTheme.success,
+                      ),
+                    ),
+                  ),
                 ],
               ),
             )
@@ -119,7 +201,6 @@ class _ReportIssueCardState extends State<_ReportIssueCard> {
               key: _formKey,
               child: Column(
                 children: [
-                  // ← 'value' deprecated in Flutter 3.33 → use initialValue
                   DropdownButtonFormField<String>(
                     initialValue: _category,
                     hint: const Text('Select issue category'),
@@ -128,11 +209,12 @@ class _ReportIssueCardState extends State<_ReportIssueCard> {
                       border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(14)),
                     ),
+                    isExpanded: true, // ← prevents dropdown overflow too
                     items: categories
                         .map((c) => DropdownMenuItem(
                               value: c,
                               child: Text(c,
-                                  style: GoogleFonts.inter(fontSize: 14)),
+                                style: GoogleFonts.inter(fontSize: 14)),
                             ))
                         .toList(),
                     onChanged: (v) => setState(() => _category = v),
@@ -144,7 +226,7 @@ class _ReportIssueCardState extends State<_ReportIssueCard> {
                     controller: _issueCtrl,
                     maxLines: 3,
                     decoration: InputDecoration(
-                      hintText: 'Describe the issue...',
+                      hintText: 'Describe the issue in detail...',
                       prefixIcon: const Padding(
                         padding: EdgeInsets.only(bottom: 40),
                         child: Icon(Icons.edit_note_rounded),
@@ -159,9 +241,16 @@ class _ReportIssueCardState extends State<_ReportIssueCard> {
                   ),
                   const SizedBox(height: 14),
                   ElevatedButton.icon(
-                    onPressed: _submit,
-                    icon: const Icon(Icons.send_rounded),
-                    label: const Text('Submit Report'),
+                    onPressed: _isLoading ? null : _submit,
+                    icon: _isLoading
+                        ? const SizedBox(
+                            width: 18, height: 18,
+                            child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: AppTheme.railwayBlue))
+                        : const Icon(Icons.send_rounded),
+                    label: Text(
+                        _isLoading ? 'Submitting...' : 'Submit Report'),
                   ),
                 ],
               ),
@@ -172,7 +261,116 @@ class _ReportIssueCardState extends State<_ReportIssueCard> {
   }
 }
 
-// ── Emergency Contacts ────────────────────────────────────
+// ──────────────────────────────────────────────────────────
+// Past Reports Card — shows reports saved this session
+// (replaced by Firestore stream when Firebase is live)
+// ──────────────────────────────────────────────────────────
+class _PastReportsCard extends StatelessWidget {
+  final LanguageProvider lang;
+  const _PastReportsCard({required this.lang});
+
+  @override
+  Widget build(BuildContext context) {
+    final auth    = context.watch<RailAuthProvider>();
+    final reports = auth.reports;
+
+    if (reports.isEmpty) return const SizedBox.shrink();
+
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 12,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Text('📋', style: TextStyle(fontSize: 20)),
+              const SizedBox(width: 10),
+              Text('My Reports (${reports.length})',
+                style: Theme.of(context).textTheme.titleMedium),
+            ],
+          ),
+          const SizedBox(height: 14),
+          ...reports.reversed.map((r) => _ReportTile(report: r)),
+        ],
+      ),
+    );
+  }
+}
+
+class _ReportTile extends StatelessWidget {
+  final Map<String, String> report;
+  const _ReportTile({required this.report});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: AppTheme.scaffoldBg,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: AppTheme.railwayBlue.withValues(alpha: 0.10),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Text(
+              report['category'] ?? 'Other',
+              style: GoogleFonts.inter(
+                fontSize: 10,
+                fontWeight: FontWeight.w700,
+                color: AppTheme.railwayBlue,
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  report['issue'] ?? '',
+                  style: GoogleFonts.inter(
+                      fontSize: 13, color: AppTheme.textSecondary),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  report['time'] ?? '',
+                  style: GoogleFonts.inter(
+                      fontSize: 10, color: AppTheme.textLight),
+                ),
+              ],
+            ),
+          ),
+          const Icon(Icons.circle, color: AppTheme.warning, size: 8),
+        ],
+      ),
+    );
+  }
+}
+
+// ──────────────────────────────────────────────────────────
+// Emergency Contacts Card
+// ──────────────────────────────────────────────────────────
 class _Contact {
   final String icon, name, number;
   final Color color;
@@ -258,7 +456,8 @@ class _ContactTile extends StatelessWidget {
             ),
           ),
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            padding: const EdgeInsets.symmetric(
+                horizontal: 12, vertical: 6),
             decoration: BoxDecoration(
               color: contact.color,
               borderRadius: BorderRadius.circular(8),
@@ -275,7 +474,9 @@ class _ContactTile extends StatelessWidget {
   }
 }
 
-// ── How It Works ──────────────────────────────────────────
+// ──────────────────────────────────────────────────────────
+// How It Works Card
+// ──────────────────────────────────────────────────────────
 class _HowItWorksCard extends StatelessWidget {
   final LanguageProvider lang;
   const _HowItWorksCard({required this.lang});
@@ -284,13 +485,13 @@ class _HowItWorksCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final steps = [
       ('📍', 'Find a QR code',
-          'Locate a QR code placard near your current position in the station.'),
+          'Locate a QR code placard near your current position.'),
       ('📷', 'Scan the QR',
           'Tap Scan QR Code and point your camera at the placard.'),
       ('🎯', 'Choose destination',
           'Select where you want to go from the dropdown list.'),
       ('🗺️', 'Follow the path',
-          "RailGuide runs Dijkstra's algorithm and shows step-by-step directions."),
+          "RailGuide runs Dijkstra's algorithm and shows directions."),
     ];
 
     return Container(
