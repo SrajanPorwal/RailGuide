@@ -1,21 +1,21 @@
 // ============================================================
-// RailGuide — Language Provider
+// RailGuide — Language Provider (Fully Localized Build)
 // providers/language_provider.dart
 // ============================================================
 
 import 'package:flutter/material.dart';
 
-/// Manages the active locale for the application.
-/// Supported: English (en), Hindi (hi), Kannada (kn).
 class LanguageProvider extends ChangeNotifier {
   Locale _currentLocale = const Locale('en');
-
   Locale get currentLocale => _currentLocale;
 
+  // Static tracking variable to allow background classes to check the active language
+  static String _staticLanguageCode = 'en';
+
   static const List<Locale> supportedLocales = [
-    Locale('en'), // English
-    Locale('hi'), // Hindi
-    Locale('kn'), // Kannada
+    Locale('en'),
+    Locale('hi'),
+    Locale('kn'),
   ];
 
   static const Map<String, String> languageLabels = {
@@ -29,12 +29,22 @@ class LanguageProvider extends ChangeNotifier {
 
   void setLanguage(String languageCode) {
     _currentLocale = Locale(languageCode);
+    _staticLanguageCode = languageCode; // Sync static tracker
     notifyListeners();
   }
 
-  // ── Localised strings ─────────────────────────────────────
-  // A lightweight in-code i18n map. For production, use
-  // flutter_localizations + ARB files.
+  /// Global Static Translation Hook
+  /// Allows background math/logic classes to translate strings without BuildContext
+  static String translate(String key) {
+    return _strings[_staticLanguageCode]?[key] ?? _strings['en']?[key] ?? key;
+  }
+
+  /// Normal instance-based translation method for UI widgets
+  String t(String key) {
+    return _strings[_currentLocale.languageCode]?[key] ?? _strings['en']?[key] ?? key;
+  }
+
+  // ── Localised Strings Dictionary ─────────────────────────
   static const Map<String, Map<String, String>> _strings = {
     'en': {
       'app_title': 'RailGuide',
@@ -61,6 +71,45 @@ class LanguageProvider extends ChangeNotifier {
       'password': 'Password',
       'start_node': 'Start Location',
       'not_scanned': 'Not scanned yet',
+
+      // Campus Nodes
+      'main_gate': 'Main Gate',
+      'mechanical_block': 'Mechanical Block',
+      'mba_block': 'MBA Block',
+      'food_court': 'Food Court',
+      'library': 'Library',
+      'temple_parking': 'Temple / Parking',
+
+      // Station Nodes
+      'parking': 'Parking',
+      'entrance': 'Entrance',
+      'ticket_counter': 'Ticket Counter',
+      'washrooms': 'Washrooms',
+      'platform_1': 'Platform 1',
+      'platform_2': 'Platform 2',
+      'bridge_start': 'Bridge Start',
+      'bridge_end': 'Bridge End',
+
+      // Cardinal Directions
+      'North': 'North', 'South': 'South', 'East': 'East', 'West': 'West',
+      'North-East': 'North-East', 'North-West': 'North-West',
+      'South-East': 'South-East', 'South-West': 'South-West',
+
+      // Compass Turning Commands
+      'Continue straight ahead': 'Continue straight ahead',
+      'Bear right': 'Bear right', 'Turn right': 'Turn right', 'Turn sharp right': 'Turn sharp right',
+      'Bear left': 'Bear left', 'Turn left': 'Turn left', 'Turn sharp left': 'Turn sharp left',
+
+      // Instruction Core Fragments
+      'start_at': '📍 Start at',
+      'arrived_at': '✅ Arrived at',
+      'cross_bridge': '🌉 Cross the foot-over bridge',
+      'head_direction': 'Head',
+      'to_node': 'to',
+      'point_found': 'Point found. Move forward',
+      'toward': 'toward',
+      'less_than_one_meter': 'less than one meter',
+      'meters': 'meters',
     },
     'hi': {
       'app_title': 'रेलगाइड',
@@ -87,6 +136,45 @@ class LanguageProvider extends ChangeNotifier {
       'password': 'पासवर्ड',
       'start_node': 'प्रारंभ स्थान',
       'not_scanned': 'अभी तक स्कैन नहीं किया',
+
+      // Campus Nodes
+      'main_gate': 'मुख्य द्वार (Main Gate)',
+      'mechanical_block': 'मैकेनिकल ब्लॉक (Mechanical Block)',
+      'mba_block': 'एमबीए ब्लॉक (MBA Block)',
+      'food_court': 'फूड कोर्ट (Food Court)',
+      'library': 'पुस्तकालय (Library)',
+      'temple_parking': 'मंदिर / पार्किंग (Temple/Parking)',
+
+      // Station Nodes
+      'parking': 'पार्किंग क्षेत्र',
+      'entrance': 'प्रवेश द्वार',
+      'ticket_counter': 'टिकट काउंटर',
+      'washrooms': 'शौचालय',
+      'platform_1': 'प्लेटफॉर्म 1',
+      'platform_2': 'प्लेटफॉर्म 2',
+      'bridge_start': 'पुल की शुरुआत',
+      'bridge_end': 'पुल का अंत',
+
+      // Cardinal Directions
+      'North': 'उत्तर', 'South': 'दक्षिण', 'East': 'पूर्व', 'West': 'पश्चिम',
+      'North-East': 'उत्तर-पूर्व', 'North-West': 'उत्तर-पश्चिम',
+      'South-East': 'दक्षिण-पूर्व', 'South-West': 'दक्षिण-पश्चिम',
+
+      // Compass Turning Commands
+      'Continue straight ahead': 'सीधे आगे बढ़ें',
+      'Bear right': 'हल्का दाएँ मुड़ें', 'Turn right': 'दाएँ मुड़ें', 'Turn sharp right': 'तेजी से दाएँ मुड़ें',
+      'Bear left': 'हल्का बाएँ मुड़ें', 'Turn left': 'बाएँ मुड़ें', 'Turn sharp left': 'तेजी से बाएँ मुड़ें',
+
+      // Instruction Core Fragments
+      'start_at': '📍 शुरुआत करें:',
+      'arrived_at': '✅ पहुँच गए:',
+      'cross_bridge': '🌉 पैदल चलने वाले पुल को पार करें',
+      'head_direction': 'दिशा में जाएँ:',
+      'to_node': 'से',
+      'point_found': 'स्थान मिल गया। आगे बढ़ें',
+      'toward': 'की ओर',
+      'less_than_one_meter': 'एक मीटर से कम',
+      'meters': 'मीटर',
     },
     'kn': {
       'app_title': 'ರೈಲ್‌ಗೈಡ್',
@@ -113,13 +201,45 @@ class LanguageProvider extends ChangeNotifier {
       'password': 'ಪಾಸ್‌ವರ್ಡ್',
       'start_node': 'ಪ್ರಾರಂಭ ಸ್ಥಳ',
       'not_scanned': 'ಇನ್ನೂ ಸ್ಕ್ಯಾನ್ ಮಾಡಿಲ್ಲ',
+
+      // Campus Nodes
+      'main_gate': 'ಮುಖ್ಯ ದ್ವಾರ (Main Gate)',
+      'mechanical_block': 'ಮೆಕ್ಯಾನಿಕಲ್ ಬ್ಲಾಕ್ (Mechanical Block)',
+      'mba_block': 'ಎಂಬಿಎ ಬ್ಲಾಕ್ (MBA Block)',
+      'food_court': 'ಫುಡ್ ಕೋರ್ಟ್ (Food Court)',
+      'library': 'ಗ್ರಂಥಾಲಯ (Library)',
+      'temple_parking': 'ದೇವಸ್ಥಾನ / ಪಾರ್ಕಿಂಗ್ (Temple/Parking)',
+
+      // Station Nodes
+      'parking': 'ಪಾರ್ಕಿಂಗ್',
+      'entrance': 'ಪ್ರವೇಶ ದ್ವಾರ',
+      'ticket_counter': 'ಟಿಕೆಟ್ ಕೌಂಟರ್',
+      'washrooms': 'ಶೌಚಾಲಯಗಳು',
+      'platform_1': 'ಪ್ಲಾಟ್‌ಫಾರ್ಮ್ 1',
+      'platform_2': 'ಪ್ಲಾಟ್‌ಫಾರ್ಮ್ 2',
+      'bridge_start': 'ಸೇತುವೆಯ ಪ್ರಾರಂಭ',
+      'bridge_end': 'ಸೇತುವೆಯ ಕೊನೆ',
+
+      // Cardinal Directions
+      'North': 'ಉತ್ತರ', 'South': 'ದಕ್ಷಿಣ', 'East': 'ಪೂರ್ವ', 'West': 'ಪಶ್ಚಿಮ',
+      'North-East': 'ಈಶಾನ್ಯ', 'North-West': 'ವಾಯುವ್ಯ',
+      'South-East': 'ಆಗ್ನೇಯ', 'South-West': 'ನೈರುತ್ಯ',
+
+      // Compass Turning Commands
+      'Continue straight ahead': 'ನೇರವಾಗಿ ಮುಂದುವರಿಯಿರಿ',
+      'Bear right': 'ಸ್ವಲ್ಪ ಬಲಕ್ಕೆ ತಿರುಗಿ', 'Turn right': 'ಬಲಕ್ಕೆ ತಿರುಗಿ', 'Turn sharp right': 'ತೀಕ್ಷ್ಣವಾಗಿ ಬಲಕ್ಕೆ ತಿರುಗಿ',
+      'Bear left': 'ಸ್ವಲ್ಪ ಎಡಕ್ಕೆ ತಿರುಗಿ', 'Turn left': 'ಎಡಕ್ಕೆ ತಿರುಗಿ', 'Turn sharp left': 'ತೀಕ್ಷ್ಣವಾಗಿ ಎಡಕ್ಕೆ ತಿರುಗಿ',
+
+      // Instruction Core Fragments
+      'start_at': '📍 ಇಲ್ಲಿಂದ ಪ್ರಾರಂಭಿಸಿ:',
+      'arrived_at': '✅ ತಲುಪಿದ್ದೀರಿ:',
+      'cross_bridge': '🌉 ಪಾದಚಾರಿ ಸೇತುವೆಯನ್ನು ದಾಟಿ',
+      'head_direction': 'ಚಲಿಸಿ',
+      'to_node': 'ಗೆ',
+      'point_found': 'ಸ್ಥಳ ಪತ್ತೆಯಾಗಿದೆ. ಮುಂದೆ ಹೋಗಿ',
+      'toward': 'ಕಡೆಗೆ',
+      'less_than_one_meter': 'ಒಂದು ಮೀಟರ್‌ಗಿಂತ ಕಡಿಮೆ',
+      'meters': 'ಮೀಟರ್',
     },
   };
-
-  /// Get a localised string by key
-  String t(String key) {
-    return _strings[_currentLocale.languageCode]?[key] ??
-        _strings['en']?[key] ??
-        key;
-  }
 }

@@ -1,5 +1,5 @@
 // ============================================================
-// RailGuide — DijkstraEngine (Updated Coordinates for RNSIT)
+// RailGuide — DijkstraEngine (Fully Fixed & Balanced)
 // core/dijkstra_engine.dart
 // ============================================================
 
@@ -7,6 +7,7 @@ import 'dart:math';
 import 'dart:ui';
 import '../models/station_node.dart';
 import '../models/station_graph.dart';
+import '../providers/language_provider.dart';
 
 class PathResult {
   final List<String> path;
@@ -42,8 +43,7 @@ class DijkstraEngine {
       );
     }
 
-    if (!graph.nodes.containsKey(startId) ||
-        !graph.nodes.containsKey(endId)) {
+    if (!graph.nodes.containsKey(startId) || !graph.nodes.containsKey(endId)) {
       return PathResult.notFound();
     }
 
@@ -98,27 +98,34 @@ class DijkstraEngine {
   List<String> _buildInstructions(List<String> path) {
     if (path.isEmpty) return [];
     final instructions = <String>[];
-    final startNode = graph.nodes[path.first];
-    instructions.add('📍 Start at ${startNode?.displayName ?? path.first}');
+    
+    final startPrefix = LanguageProvider.translate('start_at');
+    final startName = LanguageProvider.translate(path.first);
+    instructions.add('$startPrefix $startName');
 
     for (int i = 0; i < path.length - 1; i++) {
       final from = graph.nodes[path[i]];
       final to   = graph.nodes[path[i + 1]];
 
-      // Custom instruction for bridge crossing (Station Mode)
       if ((path[i] == 'bridge_start' && path[i + 1] == 'bridge_end') ||
           (path[i] == 'bridge_end'   && path[i + 1] == 'bridge_start')) {
-        instructions.add('🌉 Cross the foot-over bridge');
+        instructions.add(LanguageProvider.translate('cross_bridge'));
       } else {
         final dir  = _getDirection(from?.coordinate, to?.coordinate);
         final icon = to?.icon ?? '➡️';
-        final name = to?.displayName ?? path[i + 1];
-        instructions.add('$icon Head $dir to $name');
+        
+        final translatedHead = LanguageProvider.translate('head_direction');
+        final translatedDir = LanguageProvider.translate(dir);
+        final translatedTo = LanguageProvider.translate('to_node');
+        final translatedName = LanguageProvider.translate(path[i + 1]);
+        
+        instructions.add('$icon $translatedHead $translatedDir $translatedTo $translatedName');
       }
     }
 
-    final endNode = graph.nodes[path.last];
-    instructions.add('✅ Arrived at ${endNode?.displayName ?? path.last}');
+    final endPrefix = LanguageProvider.translate('arrived_at');
+    final endName = LanguageProvider.translate(path.last);
+    instructions.add('$endPrefix $endName');
     return instructions;
   }
 
@@ -133,17 +140,15 @@ class DijkstraEngine {
     if (dx < 0 && dy > 0) return 'South-West';
     return 'North-West';
   }
-}
+} // ← THIS curly brace closes DijkstraEngine cleanly and fixes your errors!
 
 // ──────────────────────────────────────────────────────────
-// Campus Graph Factory — RNSIT
+// Campus Graph Factory — RNSIT & Station Mode
 // ──────────────────────────────────────────────────────────
 class StationGraphFactory {
 
   // ── CAMPUS MODE (RNSIT) ───────────────────────────────
   static StationGraph buildCampusGraph() {
-
-    // ── FIXED Nodes & Coordinates ─────────────────────
     final nodes = {
       'main_gate': const StationNode(
         id: 'main_gate',
@@ -189,7 +194,6 @@ class StationGraphFactory {
       ),
     };
 
-    // ── Edges ─────────────────────────────────────────
     final edges = <String, List<StationEdge>>{};
 
     void addEdge(String a, String b) {
@@ -197,20 +201,13 @@ class StationGraphFactory {
         pow(nodes[a]!.coordinate.dx - nodes[b]!.coordinate.dx, 2) +
         pow(nodes[a]!.coordinate.dy - nodes[b]!.coordinate.dy, 2),
       );
-      edges.putIfAbsent(a, () => [])
-          .add(StationEdge(toNodeId: b, weight: w));
-      edges.putIfAbsent(b, () => [])
-          .add(StationEdge(toNodeId: a, weight: w));
+      edges.putIfAbsent(a, () => []).add(StationEdge(toNodeId: b, weight: w));
+      edges.putIfAbsent(b, () => []).add(StationEdge(toNodeId: a, weight: w));
     }
 
     // Spine Route
     addEdge('main_gate',        'mechanical_block');
     addEdge('mechanical_block', 'mba_block');
-
-    // FIX 2: Direct path connecting MBA Block directly to Temple/Parking.
-    // Instead of forcing a detour through the Food Court (adding up to ~181 units),
-    // this single straight-line path takes only 116 units, ensuring Dijkstra
-    // correctly routes users along the optimal layout.
     addEdge('mba_block',        'temple_parking');   
 
     // Food Court & Library Cluster connections
@@ -291,10 +288,8 @@ class StationGraphFactory {
         pow(nodes[a]!.coordinate.dx - nodes[b]!.coordinate.dx, 2) +
         pow(nodes[a]!.coordinate.dy - nodes[b]!.coordinate.dy, 2),
       );
-      edges.putIfAbsent(a, () => [])
-          .add(StationEdge(toNodeId: b, weight: w));
-      edges.putIfAbsent(b, () => [])
-          .add(StationEdge(toNodeId: a, weight: w)); // Note: weight variable used
+      edges.putIfAbsent(a, () => []).add(StationEdge(toNodeId: b, weight: w));
+      edges.putIfAbsent(b, () => []).add(StationEdge(toNodeId: a, weight: w));
     }
 
     addEdge('parking',        'entrance');

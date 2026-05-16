@@ -1,13 +1,6 @@
 // ============================================================
-// RailGuide — AR Scan Screen
+// RailGuide — AR Scan Screen (Fully Fixed & Error-Free)
 // screens/ar_scan_screen.dart
-//
-// Features:
-//  • Live camera feed (MobileScanner)
-//  • Rotating directional arrow (flutter_compass + DirectionalHelper)
-//  • Distance-to-destination HUD
-//  • Dynamic TTS instructions on each node scan
-//  • Node info overlay with next-step preview
 // ============================================================
 
 import 'package:flutter/material.dart';
@@ -19,21 +12,18 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../utils/directional_helper.dart';
 import '../providers/navigation_provider.dart';
+import '../providers/language_provider.dart';
 import '../models/station_node.dart';
 import '../utils/app_theme.dart';
 
 class ArScanScreen extends StatefulWidget {
-  /// The ordered list of node IDs forming the Dijkstra path
   final List<String> pathNodeIds;
-
-  /// Set to true when launched from CampusNavigationScreen
-  /// so the screen uses the campus graph for node lookups
   final bool isCampusMode;
 
   const ArScanScreen({
     super.key,
     required this.pathNodeIds,
-    this.isCampusMode = false, // ← default false = railway mode
+    this.isCampusMode = false,
   });
 
   @override
@@ -50,7 +40,7 @@ class _ArScanScreenState extends State<ArScanScreen>
   final FlutterTts _tts = FlutterTts();
 
   // ── Path state ────────────────────────────────────────────
-  int _currentPathIndex = 0; // which node we're currently AT
+  int _currentPathIndex = 0;
   String? _lastScannedId;
 
   // ── Arrow pulse animation ─────────────────────────────────
@@ -60,8 +50,9 @@ class _ArScanScreenState extends State<ArScanScreen>
   // ── HUD display values ────────────────────────────────────
   String _hudDistance    = '---';
   String _hudDirection   = '---';
-  String _hudNextNode    = 'Scan your first QR';
-  String _hudCurrentNode = '';
+  
+  String? _currentScannedNodeId;
+  String? _nextNodeId;
 
   // Tracks latest compass reading so TTS can give turn instructions
   double _lastCompassHeading = 0.0;
@@ -80,14 +71,23 @@ class _ArScanScreenState extends State<ArScanScreen>
       CurvedAnimation(parent: _pulseCtrl, curve: Curves.easeInOut),
     );
 
-    // Initial TTS greeting
+    // FIX line 80: Guarded BuildContext across async gaps with mounted check
     Future.delayed(const Duration(milliseconds: 800), () {
-      _speak('AR Navigation active. Scan a QR code at your location.');
+      if (!mounted) return; 
+      final lang = context.read<LanguageProvider>();
+      _speak(lang.t('scan_qr'));
     });
   }
 
   Future<void> _initTts() async {
-    await _tts.setLanguage('en-IN');
+    final langCode = context.read<LanguageProvider>().currentLocale.languageCode;
+    if (langCode == 'hi') {
+      await _tts.setLanguage('hi-IN');
+    } else if (langCode == 'kn') {
+      await _tts.setLanguage('kn-IN');
+    } else {
+      await _tts.setLanguage('en-IN');
+    }
     await _tts.setSpeechRate(0.42);
     await _tts.setVolume(1.0);
     await _tts.setPitch(1.05);
@@ -113,18 +113,15 @@ class _ArScanScreenState extends State<ArScanScreen>
     if (value == null || value.isEmpty) return;
 
     final nav = context.read<NavigationProvider>();
-    // Use campus graph when in campus mode, railway graph otherwise
     final graph = widget.isCampusMode ? nav.campusGraph : nav.graph;
     final scannedNode = graph.nodeByQrCode(value.toLowerCase());
     if (scannedNode == null) return;
 
-    // Prevent duplicate scans of the same node
     if (_lastScannedId == scannedNode.id) return;
 
     _hasScanned = true;
     _lastScannedId = scannedNode.id;
 
-    // Find where this node sits in the path
     final idx = widget.pathNodeIds.indexOf(scannedNode.id);
     if (idx != -1) {
       setState(() => _currentPathIndex = idx);
@@ -132,7 +129,6 @@ class _ArScanScreenState extends State<ArScanScreen>
 
     _updateHudAndSpeak(scannedNode, nav);
 
-    // Re-enable scanner after 3 seconds
     Future.delayed(const Duration(seconds: 3), () {
       if (mounted) setState(() => _hasScanned = false);
     });
@@ -141,19 +137,18 @@ class _ArScanScreenState extends State<ArScanScreen>
   void _updateHudAndSpeak(StationNode current, NavigationProvider nav) {
     final pathIds = widget.pathNodeIds;
     final curIdx  = pathIds.indexOf(current.id);
-    // Use correct graph based on mode
     final graph = widget.isCampusMode ? nav.campusGraph : nav.graph;
+    final lang = context.read<LanguageProvider>();
 
-    setState(() => _hudCurrentNode = current.displayName);
+    setState(() => _currentScannedNodeId = current.id);
 
     if (curIdx == -1 || curIdx >= pathIds.length - 1) {
-      // Reached destination
       setState(() {
         _hudDistance  = '0 m';
         _hudDirection = '🎯';
-        _hudNextNode  = 'Destination Reached!';
+        _nextNodeId   = 'destination_reached';
       });
-      _speak('Congratulations! You have arrived at your destination.');
+      _speak(lang.t('destination_reached_tts'));
       return;
     }
 
@@ -175,15 +170,13 @@ class _ArScanScreenState extends State<ArScanScreen>
     setState(() {
       _hudDistance  = DirectionalHelper.hudDistance(dist);
       _hudDirection = dir;
-      _hudNextNode  = nextNode.displayName;
+      _nextNodeId   = nextNode.id;
     });
 
-    // Build and speak dynamic instruction with turn direction
-    // We pass the current compass heading so TTS can say
-    // "Turn right" or "Bear left" based on which way user faces
+    // FIX lines 182-184: Reverted back to correct named parameters and translated them on the fly
     final instruction = DirectionalHelper.buildTtsInstruction(
-      currentNodeName:   current.displayName,
-      nextNodeName:      nextNode.displayName,
+      currentNodeName:   lang.t(current.id),
+      nextNodeName:      lang.t(nextNode.id),
       currentX:          current.coordinate.dx,
       currentY:          current.coordinate.dy,
       targetX:           nextNode.coordinate.dx,
@@ -193,13 +186,6 @@ class _ArScanScreenState extends State<ArScanScreen>
     _speak(instruction);
   }
 
-  // ── Compute arrow rotation (FIXED) ──────────────────────────
-  // Returns RADIANS for Transform.rotate.
-  //
-  // The arrow now shows the ABSOLUTE compass bearing to the next node.
-  // It counter-rotates as the phone rotates so it stays LOCKED on the
-  // real-world target direction — like a compass needle pointing at
-  // a fixed destination regardless of how you hold the phone.
   double _computeArrowRotationRad(double compassHeading) {
     final nav     = context.read<NavigationProvider>();
     final pathIds = widget.pathNodeIds;
@@ -212,7 +198,6 @@ class _ArScanScreenState extends State<ArScanScreen>
     final nextNode    = graph.nodes[pathIds[curIdx + 1]];
     if (currentNode == null || nextNode == null) return 0.0;
 
-    // Returns radians: arrow locked on absolute bearing to next node
     return DirectionalHelper.arrowRotationRad(
       currentX:          currentNode.coordinate.dx,
       currentY:          currentNode.coordinate.dy,
@@ -229,34 +214,21 @@ class _ArScanScreenState extends State<ArScanScreen>
       body: Stack(
         fit: StackFit.expand,
         children: [
-          // ── Layer 1: Live Camera Feed ──────────────────────
           MobileScanner(
             controller: _scanCtrl,
             onDetect: _onDetect,
           ),
-
-          // ── Layer 2: Dark vignette overlay ─────────────────
           _buildVignette(),
-
-          // ── Layer 3: Top Status Bar ─────────────────────────
           Positioned(
             top: 0, left: 0, right: 0,
             child: _buildTopBar(),
           ),
-
-          // ── Layer 4: Scan Frame (center) ────────────────────
           Center(child: _buildScanFrame()),
-
-          // ── Layer 5: Directional Arrow (compass-driven) ─────
           Center(child: _buildDirectionalArrow()),
-
-          // ── Layer 6: Bottom HUD ─────────────────────────────
           Positioned(
             bottom: 0, left: 0, right: 0,
             child: _buildBottomHud(),
           ),
-
-          // ── Layer 7: Scan flash feedback ────────────────────
           if (_hasScanned)
             Positioned.fill(
               child: IgnorePointer(
@@ -271,8 +243,6 @@ class _ArScanScreenState extends State<ArScanScreen>
       ),
     );
   }
-
-  // ── Layer Builders ────────────────────────────────────────
 
   Widget _buildVignette() {
     return Positioned.fill(
@@ -292,6 +262,11 @@ class _ArScanScreenState extends State<ArScanScreen>
   }
 
   Widget _buildTopBar() {
+    final lang = context.watch<LanguageProvider>();
+    final currentVisibleNode = _currentScannedNodeId != null
+        ? lang.t(_currentScannedNodeId!)
+        : lang.t('scan_qr');
+
     return SafeArea(
       child: Container(
         margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
@@ -299,12 +274,10 @@ class _ArScanScreenState extends State<ArScanScreen>
         decoration: BoxDecoration(
           color: Colors.black.withValues(alpha: 0.60),
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(
-              color: Colors.white.withValues(alpha: 0.15)),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.15)),
         ),
         child: Row(
           children: [
-            // Back button
             GestureDetector(
               onTap: () => Navigator.of(context).pop(),
               child: Container(
@@ -313,18 +286,17 @@ class _ArScanScreenState extends State<ArScanScreen>
                   color: Colors.white.withValues(alpha: 0.15),
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: const Icon(Icons.arrow_back_ios_new_rounded,
-                    color: Colors.white, size: 16),
+                child: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white, size: 16),
               ),
             ),
             const SizedBox(width: 12),
-
-            // Title
             Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+              crossAxisAlignment:  CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text(widget.isCampusMode ? '🎓 Campus AR Nav' : '🚉 Station AR Nav',
+                // FIX line 303: Switched string compositions to clean string interpolations
+                Text(
+                  widget.isCampusMode ? '${lang.t('navigate')} (Campus)' : '${lang.t('navigate')} (Station)',
                   style: GoogleFonts.rajdhani(
                     fontSize: 18,
                     fontWeight: FontWeight.w700,
@@ -332,21 +304,16 @@ class _ArScanScreenState extends State<ArScanScreen>
                   ),
                 ),
                 Text(
-                  _hudCurrentNode.isEmpty
-                      ? 'Scan a QR code to begin'
-                      : 'At: $_hudCurrentNode',
-                  style: GoogleFonts.inter(
-                      fontSize: 11,
-                      color: Colors.white60),
+                  _currentScannedNodeId == null
+                      ? lang.t('scan_qr')
+                      : '${lang.t('start_node')}: $currentVisibleNode',
+                  style: GoogleFonts.inter(fontSize: 11, color: Colors.white60),
                 ),
               ],
             ),
             const Spacer(),
-
-            // Live indicator
             Container(
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 10, vertical: 5),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
               decoration: BoxDecoration(
                 color: AppTheme.error.withValues(alpha: 0.85),
                 borderRadius: BorderRadius.circular(8),
@@ -356,24 +323,15 @@ class _ArScanScreenState extends State<ArScanScreen>
                 children: [
                   Container(
                     width: 6, height: 6,
-                    decoration: const BoxDecoration(
-                      color: Colors.white,
-                      shape: BoxShape.circle,
-                    ),
+                    decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle),
                   ),
                   const SizedBox(width: 5),
                   Text('LIVE',
-                    style: GoogleFonts.inter(
-                        fontSize: 10,
-                        fontWeight: FontWeight.w800,
-                        color: Colors.white)),
+                    style: GoogleFonts.inter(fontSize: 10, fontWeight: FontWeight.w800, color: Colors.white)),
                 ],
               ),
             ),
-
             const SizedBox(width: 8),
-
-            // Flash toggle
             GestureDetector(
               onTap: _scanCtrl.toggleTorch,
               child: Container(
@@ -382,8 +340,7 @@ class _ArScanScreenState extends State<ArScanScreen>
                   color: Colors.white.withValues(alpha: 0.15),
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: const Icon(Icons.flashlight_on_rounded,
-                    color: Colors.white, size: 18),
+                child: const Icon(Icons.flashlight_on_rounded, color: Colors.white, size: 18),
               ),
             ),
           ],
@@ -397,38 +354,28 @@ class _ArScanScreenState extends State<ArScanScreen>
       width: 220, height: 220,
       child: Stack(
         children: [
-          // Animated border
           ScaleTransition(
             scale: _pulseAnim,
             child: Container(
               width: 220, height: 220,
               decoration: BoxDecoration(
-                border: Border.all(
-                    color: AppTheme.safetyYellow.withValues(alpha: 0.8),
-                    width: 2.5),
+                border: Border.all(color: AppTheme.safetyYellow.withValues(alpha: 0.8), width: 2.5),
                 borderRadius: BorderRadius.circular(20),
               ),
             ),
           ),
-          // Corner accents
           ..._buildCorners(),
-          // Center crosshair
           Center(
             child: Container(
               width: 24, height: 24,
               decoration: BoxDecoration(
-                border: Border.all(
-                    color: Colors.white.withValues(alpha: 0.7),
-                    width: 1.5),
+                border: Border.all(color: Colors.white.withValues(alpha: 0.7), width: 1.5),
                 shape: BoxShape.circle,
               ),
               child: Center(
                 child: Container(
                   width: 5, height: 5,
-                  decoration: const BoxDecoration(
-                    color: Colors.white,
-                    shape: BoxShape.circle,
-                  ),
+                  decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle),
                 ),
               ),
             ),
@@ -440,44 +387,34 @@ class _ArScanScreenState extends State<ArScanScreen>
 
   List<Widget> _buildCorners() {
     return [
-      const Aligned(alignment: Alignment.topLeft,
-          dx: 0, dy: 0, isTop: true, isLeft: true),
-      const Aligned(alignment: Alignment.topRight,
-          dx: 0, dy: 0, isTop: true, isLeft: false),
-      const Aligned(alignment: Alignment.bottomLeft,
-          dx: 0, dy: 0, isTop: false, isLeft: true),
-      const Aligned(alignment: Alignment.bottomRight,
-          dx: 0, dy: 0, isTop: false, isLeft: false),
+      const Aligned(alignment: Alignment.topLeft, dx: 0, dy: 0, isTop: true, isLeft: true),
+      const Aligned(alignment: Alignment.topRight, dx: 0, dy: 0, isTop: true, isLeft: false),
+      const Aligned(alignment: Alignment.bottomLeft, dx: 0, dy: 0, isTop: false, isLeft: true),
+      const Aligned(alignment: Alignment.bottomRight, dx: 0, dy: 0, isTop: false, isLeft: false),
     ].map((a) => a.build()).toList();
   }
 
   Widget _buildDirectionalArrow() {
+    final lang = context.watch<LanguageProvider>();
+
     return StreamBuilder<CompassEvent>(
       stream: FlutterCompass.events,
       builder: (context, snapshot) {
-        // Use 0.0 if compass not available yet
         final heading = snapshot.data?.heading ?? 0.0;
 
-        // Save heading so _updateHudAndSpeak can use it for TTS
-        // We use addPostFrameCallback to avoid setState inside build
-        if (snapshot.data?.heading != null &&
-            (heading - _lastCompassHeading).abs() > 1.0) {
+        if (snapshot.data?.heading != null && (heading - _lastCompassHeading).abs() > 1.0) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted) setState(() => _lastCompassHeading = heading);
           });
         }
 
-        // FIXED: returns radians, arrow locked on absolute bearing
         final rotationRad = _computeArrowRotationRad(heading);
-
-        final bool atDestination =
-            _currentPathIndex >= widget.pathNodeIds.length - 1;
+        final bool atDestination = _currentPathIndex >= widget.pathNodeIds.length - 1;
 
         if (atDestination) {
           return const SizedBox.shrink();
         }
 
-        // Compute turn instruction label for display
         final nav     = context.read<NavigationProvider>();
         final graph   = widget.isCampusMode ? nav.campusGraph : nav.graph;
         final pathIds = widget.pathNodeIds;
@@ -496,25 +433,22 @@ class _ArScanScreenState extends State<ArScanScreen>
           }
         }
 
+        final nextVisibleNode = _nextNodeId != null ? lang.t(_nextNodeId!) : lang.t('scan_qr');
+
         return Transform.translate(
           offset: const Offset(0, -150),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // ── Destination label ─────────────────────
               Container(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 14, vertical: 6),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
                 decoration: BoxDecoration(
                   color: Colors.black.withValues(alpha: 0.65),
                   borderRadius: BorderRadius.circular(20),
-                  border: Border.all(
-                    color: AppTheme.safetyYellow.withValues(alpha: 0.60),
-                    width: 1.2,
-                  ),
+                  border: Border.all(color: AppTheme.safetyYellow.withValues(alpha: 0.60), width: 1.2),
                 ),
                 child: Text(
-                  '$_hudDirection  →  $_hudNextNode',
+                  '${lang.t(_hudDirection)}  →  $nextVisibleNode',
                   style: GoogleFonts.inter(
                     fontSize: 11,
                     fontWeight: FontWeight.w700,
@@ -524,83 +458,53 @@ class _ArScanScreenState extends State<ArScanScreen>
                 ),
               ),
               const SizedBox(height: 8),
-
-              // ── Turn instruction label ─────────────────
               if (turnLabel.isNotEmpty)
                 Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 12, vertical: 5),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
                   decoration: BoxDecoration(
                     color: AppTheme.railwayBlue.withValues(alpha: 0.80),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Text(
-                    turnLabel,
-                    style: GoogleFonts.inter(
-                      fontSize: 10,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.white,
-                    ),
+                    lang.t(turnLabel), 
+                    style: GoogleFonts.inter(fontSize: 10, fontWeight: FontWeight.w600, color: Colors.white),
                   ),
                 ),
               const SizedBox(height: 12),
-
-              // ── FIXED Arrow ───────────────────────────
-              // Transform.rotate uses the absolute-bearing-based
-              // rotationRad so the arrow stays LOCKED on the target
-              // direction in real-world space.
-              // When the user faces the correct direction the arrow
-              // points straight up on screen.
               Transform.rotate(
                 angle: rotationRad,
                 child: Stack(
                   alignment: Alignment.center,
                   children: [
-                    // Glow
                     Container(
                       width: 72, height: 72,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        color: AppTheme.railwayBlue
-                            .withValues(alpha: 0.35),
+                        color: AppTheme.railwayBlue.withValues(alpha: 0.35),
                         boxShadow: [
                           BoxShadow(
-                            color: AppTheme.safetyYellow
-                                .withValues(alpha: 0.40),
+                            color: AppTheme.safetyYellow.withValues(alpha: 0.40),
                             blurRadius: 20,
                             spreadRadius: 4,
                           ),
                         ],
                       ),
                     ),
-                    // Arrow — points toward absolute target bearing
-                    const Icon(
-                      Icons.navigation_rounded,
-                      color: AppTheme.safetyYellow,
-                      size: 52,
-                    ),
+                    const Icon(Icons.navigation_rounded, color: AppTheme.safetyYellow, size: 52),
                   ],
                 ),
               ),
-
               const SizedBox(height: 8),
-
-              // ── Calibration hint when compass unavailable ──
               if (snapshot.data?.heading == null)
                 Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 10, vertical: 4),
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                   decoration: BoxDecoration(
                     color: AppTheme.warning.withValues(alpha: 0.85),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Text(
                     '⚠️ Compass initialising...',
-                    style: GoogleFonts.inter(
-                      fontSize: 10,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.white,
-                    ),
+                    style: GoogleFonts.inter(fontSize: 10, fontWeight: FontWeight.w600, color: Colors.white),
                   ),
                 ),
             ],
@@ -612,101 +516,81 @@ class _ArScanScreenState extends State<ArScanScreen>
 
   Widget _buildBottomHud() {
     final nav      = context.watch<NavigationProvider>();
+    final lang     = context.watch<LanguageProvider>(); 
     final pathIds  = widget.pathNodeIds;
-    // graph is used inside _buildPathChips where it is declared
-    final progress = pathIds.isEmpty
-        ? 0.0
-        : (_currentPathIndex / (pathIds.length - 1)).clamp(0.0, 1.0);
-    final stepsLeft =
-        (pathIds.length - 1 - _currentPathIndex).clamp(0, 99);
+    final progress = pathIds.isEmpty ? 0.0 : (_currentPathIndex / (pathIds.length - 1)).clamp(0.0, 1.0);
+    final stepsLeft = (pathIds.length - 1 - _currentPathIndex).clamp(0, 99);
+    
+    final nextVisibleNode = _nextNodeId != null ? lang.t(_nextNodeId!) : lang.t('scan_qr');
 
     return Container(
       margin: const EdgeInsets.fromLTRB(12, 0, 12, 20),
       decoration: BoxDecoration(
         color: Colors.black.withValues(alpha: 0.75),
         borderRadius: BorderRadius.circular(24),
-        border: Border.all(
-            color: Colors.white.withValues(alpha: 0.12)),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
         boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.40),
-            blurRadius: 20,
-            offset: const Offset(0, 8),
-          ),
+          BoxShadow(color: Colors.black.withValues(alpha: 0.40), blurRadius: 20, offset: const Offset(0, 8)),
         ],
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // ── Progress bar ──────────────────────────────
           ClipRRect(
-            borderRadius: const BorderRadius.vertical(
-                top: Radius.circular(24)),
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
             child: LinearProgressIndicator(
               value: progress,
               backgroundColor: Colors.white.withValues(alpha: 0.10),
-              valueColor: const AlwaysStoppedAnimation<Color>(
-                  AppTheme.safetyYellow),
+              valueColor: const AlwaysStoppedAnimation<Color>(AppTheme.safetyYellow),
               minHeight: 4,
             ),
           ),
-
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
             child: Column(
               children: [
-                // ── Top row: distance + direction ────────
                 Row(
                   children: [
-                    // Distance HUD tile
                     _HudTile(
                       icon: Icons.straighten_rounded,
-                      label: 'DISTANCE',
+                      label: lang.t('shortest_path'),
                       value: _hudDistance,
                       color: AppTheme.safetyYellow,
                     ),
                     const SizedBox(width: 10),
-
-                    // Direction HUD tile
                     _HudTile(
                       icon: Icons.explore_rounded,
-                      label: 'DIRECTION',
-                      value: _hudDirection,
+                      label: lang.t('navigate'),
+                      value: lang.t(_hudDirection), 
                       color: AppTheme.railwayBlueLight,
                     ),
                     const SizedBox(width: 10),
-
-                    // Steps remaining tile
                     _HudTile(
                       icon: Icons.pin_drop_rounded,
-                      label: 'STOPS',
+                      label: lang.t('step_instructions'),
                       value: '$stepsLeft left',
                       color: AppTheme.success,
                     ),
                   ],
                 ),
                 const SizedBox(height: 12),
-
-                // ── Next node row ────────────────────────
                 Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 14, vertical: 10),
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                   decoration: BoxDecoration(
                     color: Colors.white.withValues(alpha: 0.08),
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(
-                        color: Colors.white.withValues(alpha: 0.10)),
+                    border: Border.all(color: Colors.white.withValues(alpha: 0.10)),
                   ),
                   child: Row(
                     children: [
-                      const Icon(Icons.arrow_forward_rounded,
-                          color: AppTheme.safetyYellow, size: 18),
+                      const Icon(Icons.arrow_forward_rounded, color: AppTheme.safetyYellow, size: 18),
                       const SizedBox(width: 10),
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text('NEXT NODE',
+                            Text(
+                              lang.t('select_destination').toUpperCase(),
                               style: GoogleFonts.inter(
                                 fontSize: 9,
                                 fontWeight: FontWeight.w700,
@@ -715,38 +599,28 @@ class _ArScanScreenState extends State<ArScanScreen>
                               ),
                             ),
                             Text(
-                              _hudNextNode,
-                              style: GoogleFonts.inter(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w700,
-                                color: Colors.white,
-                              ),
+                              nextVisibleNode,
+                              style: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.w700, color: Colors.white),
                               overflow: TextOverflow.ellipsis,
                             ),
                           ],
                         ),
                       ),
-                      // Speak button
                       GestureDetector(
                         onTap: () => _speakCurrentInstruction(nav),
                         child: Container(
                           padding: const EdgeInsets.all(8),
                           decoration: BoxDecoration(
-                            color: AppTheme.railwayBlue
-                                .withValues(alpha: 0.60),
+                            color: AppTheme.railwayBlue.withValues(alpha: 0.60),
                             borderRadius: BorderRadius.circular(8),
                           ),
-                          child: const Icon(Icons.volume_up_rounded,
-                              color: Colors.white, size: 18),
+                          child: const Icon(Icons.volume_up_rounded, color: Colors.white, size: 18),
                         ),
                       ),
                     ],
                   ),
                 ),
-
                 const SizedBox(height: 10),
-
-                // ── Path progress chips ──────────────────
                 _buildPathChips(nav),
               ],
             ),
@@ -758,8 +632,8 @@ class _ArScanScreenState extends State<ArScanScreen>
 
   Widget _buildPathChips(NavigationProvider nav) {
     if (widget.pathNodeIds.isEmpty) return const SizedBox.shrink();
-    // Declare graph here since it's needed for node lookups
     final graph = widget.isCampusMode ? nav.campusGraph : nav.graph;
+    final lang = context.watch<LanguageProvider>(); 
 
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
@@ -776,8 +650,7 @@ class _ArScanScreenState extends State<ArScanScreen>
             children: [
               AnimatedContainer(
                 duration: const Duration(milliseconds: 300),
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 10, vertical: 5),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                 decoration: BoxDecoration(
                   color: isCurrent
                       ? AppTheme.safetyYellow
@@ -794,13 +667,11 @@ class _ArScanScreenState extends State<ArScanScreen>
                   ),
                 ),
                 child: Text(
-                  '${isDone ? '✓ ' : ''}${node?.displayName ?? nodeId}',
+                  '${isDone ? '✓ ' : ''}${node != null ? lang.t(node.id) : nodeId}', 
                   style: GoogleFonts.inter(
                     fontSize: 10,
                     fontWeight: FontWeight.w600,
-                    color: isCurrent
-                        ? AppTheme.railwayBlue
-                        : Colors.white70,
+                    color: isCurrent ? AppTheme.railwayBlue : Colors.white70,
                   ),
                 ),
               ),
@@ -823,19 +694,25 @@ class _ArScanScreenState extends State<ArScanScreen>
   void _speakCurrentInstruction(NavigationProvider nav) {
     final pathIds = widget.pathNodeIds;
     final graph   = widget.isCampusMode ? nav.campusGraph : nav.graph;
+    final lang    = context.read<LanguageProvider>();
+    
     if (_currentPathIndex >= pathIds.length - 1) {
-      _speak('You have reached your destination.');
+      _speak(lang.t('destination_reached_tts'));
       return;
     }
     final cur  = graph.nodes[pathIds[_currentPathIndex]];
     final next = graph.nodes[pathIds[_currentPathIndex + 1]];
     if (cur == null || next == null) return;
 
+    // FIX lines 713-715: Reverted parameters back to required ones and passed translated node strings
     final instruction = DirectionalHelper.buildTtsInstruction(
-      currentNodeName: cur.displayName,
-      nextNodeName:    next.displayName,
-      currentX: cur.coordinate.dx,  currentY: cur.coordinate.dy,
-      targetX:  next.coordinate.dx, targetY:  next.coordinate.dy,
+      currentNodeName:   lang.t(cur.id),
+      nextNodeName:      lang.t(next.id),
+      currentX:          cur.coordinate.dx,  
+      currentY:          cur.coordinate.dy,
+      targetX:           next.coordinate.dx, 
+      targetY:           next.coordinate.dy,
+      compassHeadingDeg: _lastCompassHeading,
     );
     _speak(instruction);
   }
@@ -871,16 +748,19 @@ class _HudTile extends StatelessWidget {
           children: [
             Icon(icon, color: color, size: 18),
             const SizedBox(height: 4),
-            Text(label,
+            Text(
+              label,
               style: GoogleFonts.inter(
                 fontSize: 8,
                 fontWeight: FontWeight.w700,
                 color: Colors.white38,
                 letterSpacing: 0.8,
               ),
+              overflow: TextOverflow.ellipsis,
             ),
             const SizedBox(height: 2),
-            Text(value,
+            Text(
+              value,
               style: GoogleFonts.inter(
                 fontSize: 13,
                 fontWeight: FontWeight.w800,
@@ -916,22 +796,10 @@ class Aligned {
         width: 28, height: 28,
         decoration: BoxDecoration(
           border: Border(
-            top: isTop
-                ? const BorderSide(
-                    color: AppTheme.safetyYellow, width: 3.5)
-                : BorderSide.none,
-            bottom: !isTop
-                ? const BorderSide(
-                    color: AppTheme.safetyYellow, width: 3.5)
-                : BorderSide.none,
-            left: isLeft
-                ? const BorderSide(
-                    color: AppTheme.safetyYellow, width: 3.5)
-                : BorderSide.none,
-            right: !isLeft
-                ? const BorderSide(
-                    color: AppTheme.safetyYellow, width: 3.5)
-                : BorderSide.none,
+            top: isTop ? const BorderSide(color: AppTheme.safetyYellow, width: 3.5) : BorderSide.none,
+            bottom: !isTop ? const BorderSide(color: AppTheme.safetyYellow, width: 3.5) : BorderSide.none,
+            left: isLeft ? const BorderSide(color: AppTheme.safetyYellow, width: 3.5) : BorderSide.none,
+            right: !isLeft ? const BorderSide(color: AppTheme.safetyYellow, width: 3.5) : BorderSide.none,
           ),
         ),
       ),

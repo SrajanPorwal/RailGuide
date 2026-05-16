@@ -372,7 +372,7 @@ class _StartNodeCard extends StatelessWidget {
           if (nav.campusStartNode != null)
             _ScannedBadge(
               icon: nav.campusStartNode!.icon,
-              name: nav.campusStartNode!.displayName,
+              name: lang.t(nav.campusStartNode!.id), // ✅ Localizes your current matching station tag
               qr: nav.campusStartNode!.qrCode,
             )
           else
@@ -449,7 +449,7 @@ class _StartNodeCard extends StatelessWidget {
                     ),
                   ),
                   child: Text(
-                    '${node.icon} ${node.displayName}',
+                    '${node.icon} ${lang.t(node.id)}', // ✅ Translates campus selector button tags live
                     style: GoogleFonts.inter(
                       fontSize: 11,
                       fontWeight: FontWeight.w600,
@@ -541,7 +541,7 @@ class _DestinationCard extends StatelessWidget {
                               style: const TextStyle(fontSize: 18)),
                           const SizedBox(width: 10),
                           Expanded(
-                            child: Text(node.displayName,
+                            child: Text(lang.t(node.id), // ✅ Localizes the dropdown choices
                               style: GoogleFonts.inter(
                                   fontSize: 13,
                                   fontWeight: FontWeight.w500),
@@ -613,7 +613,7 @@ class _ArrowPathCard extends StatelessWidget {
             crossAxisAlignment: WrapCrossAlignment.center,
             spacing: 4,
             runSpacing: 12,
-            children: _buildArrowWidgets(path, nav),
+            children: _buildArrowWidgets(path, nav, context),
           ),
 
           const SizedBox(height: 14),
@@ -637,7 +637,7 @@ class _ArrowPathCard extends StatelessWidget {
   }
 
   List<Widget> _buildArrowWidgets(
-      List<String> path, NavigationProvider nav) {
+      List<String> path, NavigationProvider nav, BuildContext context) {
     final widgets = <Widget>[];
 
     for (int i = 0; i < path.length; i++) {
@@ -680,7 +680,7 @@ class _ArrowPathCard extends StatelessWidget {
                   style: const TextStyle(fontSize: 14)),
               const SizedBox(width: 5),
               Text(
-                node?.displayName ?? path[i],
+                node != null ? Provider.of<LanguageProvider>(context, listen: false).t(node.id) : path[i], // ✅ Updates route badges
                 style: GoogleFonts.inter(
                   fontSize: 11,
                   fontWeight: FontWeight.w700,

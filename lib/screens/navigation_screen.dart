@@ -475,7 +475,7 @@ class _DestinationCard extends StatelessWidget {
                           Text(node.icon,
                               style: const TextStyle(fontSize: 18)),
                           const SizedBox(width: 10),
-                          Text(node.displayName,
+                          Text(lang.t(node.id),
                               style: GoogleFonts.inter(
                                   fontSize: 14,
                                   fontWeight: FontWeight.w500)),
