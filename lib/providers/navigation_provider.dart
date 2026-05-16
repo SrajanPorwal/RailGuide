@@ -16,11 +16,9 @@ enum AppNavigationMode { railway, campus }
 // ──────────────────────────────────────────────────────────
 // Campus Graph Factory — RNSIT nodes & edges
 // ──────────────────────────────────────────────────────────
-// ──────────────────────────────────────────────────────────
-// Campus Graph Factory — RNSIT nodes & edges
-// ──────────────────────────────────────────────────────────
 class CampusGraphFactory {
   static StationGraph buildCampusGraph() {
+    // ✅ FIXED: Coordinates and Nodes updated to your precise specifications
     final nodes = {
       'main_gate': const StationNode(
         id: 'main_gate',
@@ -29,21 +27,20 @@ class CampusGraphFactory {
         icon: '⛩️',
         qrCode: 'RNSIT_GATE',
       ),
-      'cse_block': const StationNode(
-        id: 'cse_block',
-        displayName: 'CSE Block',
-        coordinate: Offset(12, 18),
-        icon: '💻',
-        qrCode: 'RNSIT_CSE',
+      'mechanical_block': const StationNode(
+        id: 'mechanical_block',
+        displayName: 'Mechanical Block',
+        coordinate: Offset(0, 98),
+        icon: '⚙️',
+        qrCode: 'RNSIT_MECH',
       ),
       'mba_block': const StationNode(
         id: 'mba_block',
         displayName: 'MBA Block',
-        coordinate: Offset(22, 10),
+        coordinate: Offset(0, 187),
         icon: '🏛️',
         qrCode: 'RNSIT_MBA',
       ),
-      // FIX 1: Food Court coordinate updated and renamed
       'food_court': const StationNode(
         id: 'food_court',
         displayName: 'Food Court',
@@ -51,7 +48,6 @@ class CampusGraphFactory {
         icon: '🍽️',
         qrCode: 'RNSIT_FOOD',
       ),
-      // FIX 2: Corrected node at (102, 221) to Library
       'library': const StationNode(
         id: 'library',
         displayName: 'Library',
@@ -80,18 +76,21 @@ class CampusGraphFactory {
       edges.putIfAbsent(b, () => []).add(StationEdge(toNodeId: a, weight: w));
     }
 
-    // --- Graph Connections ---
-    addEdge('main_gate', 'cse_block');
-    addEdge('cse_block', 'mba_block');
+    // ── Spine Route Connections ─────────────────────
+    addEdge('main_gate',        'mechanical_block');
+    addEdge('mechanical_block', 'mba_block');
     
-    // FIX 3: Direct MBA to Temple/Parking shortcut
-    // This allows the algorithm to bypass the long detour through the Food Court
-    addEdge('mba_block', 'temple_parking'); 
+    // ✅ FIX: Direct MBA to Temple/Parking shortcut path (116 units)
+    // Prevents the algorithm from forcing detours through the Food Court
+    addEdge('mba_block',        'temple_parking'); 
     
-    // Remote Area Path
-    addEdge('cse_block', 'food_court');
-    addEdge('food_court', 'library');
-    addEdge('main_gate', 'temple_parking');
+    // ── Remote Area / Loop Paths ────────────────────
+    addEdge('mba_block',        'food_court');
+    addEdge('mba_block',        'library');
+    addEdge('food_court',       'library');
+    addEdge('food_court',       'temple_parking');
+    addEdge('library',          'temple_parking');
+    addEdge('temple_parking',   'main_gate');
 
     return StationGraph(nodes: nodes, edges: edges);
   }

@@ -1,5 +1,5 @@
 // ============================================================
-// RailGuide — DijkstraEngine (Updated for RNSIT Campus)
+// RailGuide — DijkstraEngine (Updated Coordinates for RNSIT)
 // core/dijkstra_engine.dart
 // ============================================================
 
@@ -143,10 +143,7 @@ class StationGraphFactory {
   // ── CAMPUS MODE (RNSIT) ───────────────────────────────
   static StationGraph buildCampusGraph() {
 
-    // ── Nodes ─────────────────────────────────────────
-    // FIX 1: Renamed food_court_b (102,221) → library
-    //        The node at (67,221) is Food Court
-    //        The node at (102,221) is Library (not a second food court)
+    // ── FIXED Nodes & Coordinates ─────────────────────
     final nodes = {
       'main_gate': const StationNode(
         id: 'main_gate',
@@ -155,28 +152,20 @@ class StationGraphFactory {
         icon: '⛩️',
         qrCode: 'rnsit_gate',
       ),
-      'parking': const StationNode(
-        id: 'parking',
-        displayName: 'Parking',
-        coordinate: Offset(0, -5),
-        icon: '🅿️',
-        qrCode: 'rnsit_parking',
-      ),
-      'temple': const StationNode(
-        id: 'temple',
-        displayName: 'Temple',
-        coordinate: Offset(5, 5),
-        icon: '🛕',
-        qrCode: 'rnsit_temple',
+      'mechanical_block': const StationNode(
+        id: 'mechanical_block',
+        displayName: 'Mechanical Block',
+        coordinate: Offset(0, 98),
+        icon: '⚙️',
+        qrCode: 'rnsit_mech',
       ),
       'mba_block': const StationNode(
         id: 'mba_block',
         displayName: 'MBA Block',
-        coordinate: Offset(22, 10),
+        coordinate: Offset(0, 187),
         icon: '🏢',
         qrCode: 'rnsit_mba',
       ),
-      // FIX 1a: (67,221) → Food Court (single food court node)
       'food_court': const StationNode(
         id: 'food_court',
         displayName: 'Food Court',
@@ -184,7 +173,6 @@ class StationGraphFactory {
         icon: '🍽️',
         qrCode: 'rnsit_food',
       ),
-      // FIX 1b: (102,221) → Library (was incorrectly named food_court_b)
       'library': const StationNode(
         id: 'library',
         displayName: 'Library',
@@ -192,12 +180,12 @@ class StationGraphFactory {
         icon: '📚',
         qrCode: 'rnsit_library',
       ),
-      'cse_block': const StationNode(
-        id: 'cse_block',
-        displayName: 'CSE Block',
-        coordinate: Offset(12, 18),
-        icon: '💻',
-        qrCode: 'rnsit_cse',
+      'temple_parking': const StationNode(
+        id: 'temple_parking',
+        displayName: 'Temple / Parking',
+        coordinate: Offset(0, 303),
+        icon: '🛕',
+        qrCode: 'rnsit_temple',
       ),
     };
 
@@ -215,26 +203,23 @@ class StationGraphFactory {
           .add(StationEdge(toNodeId: a, weight: w));
     }
 
-    // ── Gate / Parking / Temple cluster ───────────────
-    addEdge('main_gate', 'parking');
-    addEdge('main_gate', 'temple');
-    addEdge('parking',   'temple');
+    // Spine Route
+    addEdge('main_gate',        'mechanical_block');
+    addEdge('mechanical_block', 'mba_block');
 
-    // FIX 2: Direct MBA → Parking and MBA → Temple edges.
-    // Without these, Dijkstra had to route MBA → CSE → Food Court
-    // → (long detour) to reach Parking/Temple because there was no
-    // shorter direct path. Now MBA connects directly to both,
-    // so MBA → Parking and MBA → Temple are always the shortest routes.
-    addEdge('mba_block', 'parking');   // ← direct shortcut
-    addEdge('mba_block', 'temple');    // ← direct shortcut
-    addEdge('mba_block', 'main_gate'); // ← also connect to gate
-    addEdge('mba_block', 'cse_block');
+    // FIX 2: Direct path connecting MBA Block directly to Temple/Parking.
+    // Instead of forcing a detour through the Food Court (adding up to ~181 units),
+    // this single straight-line path takes only 116 units, ensuring Dijkstra
+    // correctly routes users along the optimal layout.
+    addEdge('mba_block',        'temple_parking');   
 
-    // ── Academic / Remote cluster ─────────────────────
-    // CSE → Food Court → Library (one-way chain into remote area)
-    // These are NOT connected back to MBA to avoid the detour loop
-    addEdge('cse_block',   'food_court');
-    addEdge('food_court',  'library');
+    // Food Court & Library Cluster connections
+    addEdge('mba_block',        'food_court');
+    addEdge('mba_block',        'library');
+    addEdge('food_court',       'library');
+    addEdge('food_court',       'temple_parking');
+    addEdge('library',          'temple_parking');
+    addEdge('temple_parking',   'main_gate');
 
     return StationGraph(nodes: nodes, edges: edges);
   }
@@ -309,7 +294,7 @@ class StationGraphFactory {
       edges.putIfAbsent(a, () => [])
           .add(StationEdge(toNodeId: b, weight: w));
       edges.putIfAbsent(b, () => [])
-          .add(StationEdge(toNodeId: a, weight: w));
+          .add(StationEdge(toNodeId: a, weight: w)); // Note: weight variable used
     }
 
     addEdge('parking',        'entrance');
