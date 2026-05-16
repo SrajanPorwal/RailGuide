@@ -1,65 +1,126 @@
-import 'dart:math';
-import 'package:flutter_tts/flutter_tts.dart';
-import 'package:vector_math/vector_math_64.dart' as vector;
+// ============================================================
+// RailGuide — DirectionalHelper (Pure Static Production Build)
+// lib/utils/directional_helper.dart
+// ============================================================
+
+import 'dart:math' as math;
 
 class DirectionalHelper {
-  final FlutterTts flutterTts = FlutterTts();
+  // ── Absolute compass bearing (0-360°) from current → target ──
+  static double absoluteBearing({
+    required double currentX, required double currentY,
+    required double targetX,  required double targetY,
+  }) {
+    final dx = targetX - currentX;
+    final dy = -(targetY - currentY); // flip Y: grid Y↑ = North
 
-  DirectionalHelper() {
-    _initTts();
+    double bearing = 90.0 - (math.atan2(dy, dx) * 180.0 / math.pi);
+    return ((bearing % 360) + 360) % 360;
   }
 
-  Future<void> _initTts() async {
-    await flutterTts.setLanguage("en-US");
-    await flutterTts.setSpeechRate(0.5); // Slightly slower for clear instructions
-    await flutterTts.setPitch(1.0);
+  // ── Arrow rotation angle for Transform.rotate ─────────────
+  static double arrowRotationRad({
+    required double currentX,
+    required double currentY,
+    required double targetX,
+    required double targetY,
+    required double compassHeadingDeg,
+  }) {
+    final bearing = absoluteBearing(
+      currentX: currentX, currentY: currentY,
+      targetX: targetX,   targetY: targetY,
+    );
+
+    double diff = bearing - compassHeadingDeg;
+    diff = ((diff + 180) % 360) - 180; // Normalise to -180..+180
+    return diff * math.pi / 180.0;
   }
 
-  /// Calculates the Euclidean distance between two nodes (assumes grid units are meters)
-  double calculateDistance(Point<double> current, Point<double> target) {
-    return current.distanceTo(target);
+  // ── Euclidean distance between two nodes ──────────────────
+  static double distanceMeters(double x1, double y1, double x2, double y2) {
+    return math.sqrt(math.pow(x2 - x1, 2) + math.pow(y2 - y1, 2));
   }
 
-  /// Calculates the target bearing in degrees (0 to 360, where 0 is North)
-  /// based on standard Cartesian coordinates.
-  double calculateBearing(Point<double> current, Point<double> target) {
-    double dy = target.y - current.y;
-    double dx = target.x - current.x;
-    
-    // atan2 returns angle in radians from -pi to pi
-    double radians = atan2(dy, dx);
-    double degrees = vector.degrees(radians);
-    
-    // Convert math angle to compass bearing: 
-    // Math 0° (East) -> Compass 90°
-    // Math 90° (North) -> Compass 0°
-    return (90 - degrees) % 360;
+  // ── 8-point compass label for the bearing ─────────────────
+  static String compassLabel({
+    required double currentX, required double currentY,
+    required double targetX,  required double targetY,
+  }) {
+    final bearing = absoluteBearing(
+      currentX: currentX, currentY: currentY,
+      targetX: targetX,   targetY: targetY,
+    );
+
+    const labels = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+    final idx = ((bearing + 22.5) % 360 ~/ 45).clamp(0, 7);
+    return labels[idx];
   }
 
-  /// Determines the relative turn phrase based on current phone heading
-  String _getTurnDirection(double currentHeading, double targetBearing) {
-    double diff = (targetBearing - currentHeading) % 360;
-    if (diff < 0) diff += 360; // Normalize
+  // ── Human-readable turn instruction ───────────────────────
+  static String turnInstruction({
+    required double compassHeadingDeg,
+    required double currentX, required double currentY,
+    required double targetX,  required double targetY,
+  }) {
+    final bearing = absoluteBearing(
+      currentX: currentX, currentY: currentY,
+      targetX: targetX,   targetY: targetY,
+    );
 
-    if (diff > 345 || diff < 15) return "straight";
-    if (diff >= 15 && diff <= 165) return "right";
-    if (diff >= 195 && diff <= 345) return "left";
-    return "around"; // 165 to 195
+    double diff = bearing - compassHeadingDeg;
+    diff = ((diff + 180) % 360) - 180;
+
+    if (diff.abs() <= 20)        return 'Continue straight ahead';
+    if (diff > 20 && diff <= 60)  return 'Bear right';
+    if (diff > 60 && diff <= 120) return 'Turn right';
+    if (diff > 120)               return 'Turn sharp right';
+    if (diff < -20 && diff >= -60) return 'Bear left';
+    if (diff < -60 && diff >= -120) return 'Turn left';
+    return 'Turn sharp left';
   }
 
-  /// Triggers the dynamic Voice Command
-  Future<void> speakDirections({
-    required double distance,
-    required double currentHeading,
-    required double targetBearing,
+  // ── HUD distance string ────────────────────────────────────
+  static String hudDistance(double meters) {
+    if (meters < 1)   return '< 1 m';
+    if (meters < 100) return '${meters.toStringAsFixed(1)} m';
+    return '${(meters / 1000).toStringAsFixed(2)} km';
+  }
+
+  // ── Full TTS instruction ───────────────────────────────────
+  static String buildTtsInstruction({
+    required String currentNodeName,
     required String nextNodeName,
-  }) async {
-    String turnDirection = _getTurnDirection(currentHeading, targetBearing);
-    String distStr = distance.toStringAsFixed(1);
-    
-    String text = "Point found. Move forward $distStr meters and then turn $turnDirection toward $nextNodeName.";
-    
-    await flutterTts.stop(); // Stop any ongoing speech
-    await flutterTts.speak(text);
+    required double currentX, required double currentY,
+    required double targetX,  required double targetY,
+    double? compassHeadingDeg,
+  }) {
+    final dist    = distanceMeters(currentX, currentY, targetX, targetY);
+    final dir     = compassLabel(currentX: currentX, currentY: currentY, targetX: targetX, targetY: targetY);
+    final dirFull = _expandDirection(dir);
+    final distStr = dist < 1 ? 'less than one meter' : '${dist.toStringAsFixed(0)} meters';
+
+    String turnStr = '';
+    if (compassHeadingDeg != null) {
+      final turn = turnInstruction(
+        compassHeadingDeg: compassHeadingDeg,
+        currentX: currentX, currentY: currentY,
+        targetX: targetX,   targetY: targetY,
+      );
+      turnStr = ' $turn and head $dirFull.';
+    } else {
+      turnStr = ' Head $dirFull.';
+    }
+
+    return 'Point found. Move forward $distStr toward $nextNodeName.$turnStr';
+  }
+
+  static String _expandDirection(String short) {
+    const map = {
+      'N':  'North',     'NE': 'North-East',
+      'E':  'East',      'SE': 'South-East',
+      'S':  'South',     'SW': 'South-West',
+      'W':  'West',      'NW': 'North-West',
+    };
+    return map[short] ?? short;
   }
 }

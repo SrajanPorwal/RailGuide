@@ -10,7 +10,6 @@
 //  • Node info overlay with next-step preview
 // ============================================================
 
-import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -18,7 +17,7 @@ import 'package:flutter_tts/flutter_tts.dart';
 import 'package:flutter_compass/flutter_compass.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
-import '../core/directional_helper.dart';
+import '../utils/directional_helper.dart';
 import '../providers/navigation_provider.dart';
 import '../models/station_node.dart';
 import '../utils/app_theme.dart';
@@ -59,10 +58,13 @@ class _ArScanScreenState extends State<ArScanScreen>
   late Animation<double>   _pulseAnim;
 
   // ── HUD display values ────────────────────────────────────
-  String _hudDistance   = '---';
-  String _hudDirection  = '---';
-  String _hudNextNode   = 'Scan your first QR';
+  String _hudDistance    = '---';
+  String _hudDirection   = '---';
+  String _hudNextNode    = 'Scan your first QR';
   String _hudCurrentNode = '';
+
+  // Tracks latest compass reading so TTS can give turn instructions
+  double _lastCompassHeading = 0.0;
 
   @override
   void initState() {
@@ -176,37 +178,46 @@ class _ArScanScreenState extends State<ArScanScreen>
       _hudNextNode  = nextNode.displayName;
     });
 
-    // Build and speak dynamic instruction
+    // Build and speak dynamic instruction with turn direction
+    // We pass the current compass heading so TTS can say
+    // "Turn right" or "Bear left" based on which way user faces
     final instruction = DirectionalHelper.buildTtsInstruction(
-      currentNodeName: current.displayName,
-      nextNodeName:    nextNode.displayName,
-      currentX: current.coordinate.dx,
-      currentY: current.coordinate.dy,
-      targetX:  nextNode.coordinate.dx,
-      targetY:  nextNode.coordinate.dy,
+      currentNodeName:   current.displayName,
+      nextNodeName:      nextNode.displayName,
+      currentX:          current.coordinate.dx,
+      currentY:          current.coordinate.dy,
+      targetX:           nextNode.coordinate.dx,
+      targetY:           nextNode.coordinate.dy,
+      compassHeadingDeg: _lastCompassHeading,
     );
     _speak(instruction);
   }
 
-  // ── Compute arrow rotation from compass stream ─────────────
-  double _computeArrowRotation(double compassHeading) {
-    final nav      = context.read<NavigationProvider>();
-    final pathIds  = widget.pathNodeIds;
-    final curIdx   = _currentPathIndex;
-    // Use correct graph based on mode
-    final graph = widget.isCampusMode ? nav.campusGraph : nav.graph;
+  // ── Compute arrow rotation (FIXED) ──────────────────────────
+  // Returns RADIANS for Transform.rotate.
+  //
+  // The arrow now shows the ABSOLUTE compass bearing to the next node.
+  // It counter-rotates as the phone rotates so it stays LOCKED on the
+  // real-world target direction — like a compass needle pointing at
+  // a fixed destination regardless of how you hold the phone.
+  double _computeArrowRotationRad(double compassHeading) {
+    final nav     = context.read<NavigationProvider>();
+    final pathIds = widget.pathNodeIds;
+    final curIdx  = _currentPathIndex;
+    final graph   = widget.isCampusMode ? nav.campusGraph : nav.graph;
 
-    if (pathIds.isEmpty || curIdx >= pathIds.length - 1) return 0;
+    if (pathIds.isEmpty || curIdx >= pathIds.length - 1) return 0.0;
 
     final currentNode = graph.nodes[pathIds[curIdx]];
     final nextNode    = graph.nodes[pathIds[curIdx + 1]];
-    if (currentNode == null || nextNode == null) return 0;
+    if (currentNode == null || nextNode == null) return 0.0;
 
-    return DirectionalHelper.arrowRotation(
-      currentX: currentNode.coordinate.dx,
-      currentY: currentNode.coordinate.dy,
-      targetX:  nextNode.coordinate.dx,
-      targetY:  nextNode.coordinate.dy,
+    // Returns radians: arrow locked on absolute bearing to next node
+    return DirectionalHelper.arrowRotationRad(
+      currentX:          currentNode.coordinate.dx,
+      currentY:          currentNode.coordinate.dy,
+      targetX:           nextNode.coordinate.dx,
+      targetY:           nextNode.coordinate.dy,
       compassHeadingDeg: compassHeading,
     );
   }
@@ -444,9 +455,20 @@ class _ArScanScreenState extends State<ArScanScreen>
     return StreamBuilder<CompassEvent>(
       stream: FlutterCompass.events,
       builder: (context, snapshot) {
+        // Use 0.0 if compass not available yet
         final heading = snapshot.data?.heading ?? 0.0;
-        final rotationDeg = _computeArrowRotation(heading);
-        final rotationRad = rotationDeg * math.pi / 180.0;
+
+        // Save heading so _updateHudAndSpeak can use it for TTS
+        // We use addPostFrameCallback to avoid setState inside build
+        if (snapshot.data?.heading != null &&
+            (heading - _lastCompassHeading).abs() > 1.0) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) setState(() => _lastCompassHeading = heading);
+          });
+        }
+
+        // FIXED: returns radians, arrow locked on absolute bearing
+        final rotationRad = _computeArrowRotationRad(heading);
 
         final bool atDestination =
             _currentPathIndex >= widget.pathNodeIds.length - 1;
@@ -455,12 +477,31 @@ class _ArScanScreenState extends State<ArScanScreen>
           return const SizedBox.shrink();
         }
 
+        // Compute turn instruction label for display
+        final nav     = context.read<NavigationProvider>();
+        final graph   = widget.isCampusMode ? nav.campusGraph : nav.graph;
+        final pathIds = widget.pathNodeIds;
+        String turnLabel = '';
+        if (_currentPathIndex < pathIds.length - 1) {
+          final cur  = graph.nodes[pathIds[_currentPathIndex]];
+          final next = graph.nodes[pathIds[_currentPathIndex + 1]];
+          if (cur != null && next != null) {
+            turnLabel = DirectionalHelper.turnInstruction(
+              compassHeadingDeg: heading,
+              currentX: cur.coordinate.dx,
+              currentY: cur.coordinate.dy,
+              targetX:  next.coordinate.dx,
+              targetY:  next.coordinate.dy,
+            );
+          }
+        }
+
         return Transform.translate(
-          offset: const Offset(0, -150), // above scan frame
+          offset: const Offset(0, -150),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // Direction label chip
+              // ── Destination label ─────────────────────
               Container(
                 padding: const EdgeInsets.symmetric(
                     horizontal: 14, vertical: 6),
@@ -468,12 +509,12 @@ class _ArScanScreenState extends State<ArScanScreen>
                   color: Colors.black.withValues(alpha: 0.65),
                   borderRadius: BorderRadius.circular(20),
                   border: Border.all(
-                      color: AppTheme.safetyYellow.withValues(
-                          alpha: 0.60),
-                      width: 1.2),
+                    color: AppTheme.safetyYellow.withValues(alpha: 0.60),
+                    width: 1.2,
+                  ),
                 ),
                 child: Text(
-                  'HEAD $_hudDirection → $_hudNextNode',
+                  '$_hudDirection  →  $_hudNextNode',
                   style: GoogleFonts.inter(
                     fontSize: 11,
                     fontWeight: FontWeight.w700,
@@ -482,15 +523,40 @@ class _ArScanScreenState extends State<ArScanScreen>
                   ),
                 ),
               ),
+              const SizedBox(height: 8),
+
+              // ── Turn instruction label ─────────────────
+              if (turnLabel.isNotEmpty)
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 12, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: AppTheme.railwayBlue.withValues(alpha: 0.80),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    turnLabel,
+                    style: GoogleFonts.inter(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
               const SizedBox(height: 12),
 
-              // Rotating arrow
+              // ── FIXED Arrow ───────────────────────────
+              // Transform.rotate uses the absolute-bearing-based
+              // rotationRad so the arrow stays LOCKED on the target
+              // direction in real-world space.
+              // When the user faces the correct direction the arrow
+              // points straight up on screen.
               Transform.rotate(
                 angle: rotationRad,
                 child: Stack(
                   alignment: Alignment.center,
                   children: [
-                    // Glow behind arrow
+                    // Glow
                     Container(
                       width: 72, height: 72,
                       decoration: BoxDecoration(
@@ -507,7 +573,7 @@ class _ArScanScreenState extends State<ArScanScreen>
                         ],
                       ),
                     ),
-                    // Arrow icon
+                    // Arrow — points toward absolute target bearing
                     const Icon(
                       Icons.navigation_rounded,
                       color: AppTheme.safetyYellow,
@@ -516,6 +582,27 @@ class _ArScanScreenState extends State<ArScanScreen>
                   ],
                 ),
               ),
+
+              const SizedBox(height: 8),
+
+              // ── Calibration hint when compass unavailable ──
+              if (snapshot.data?.heading == null)
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: AppTheme.warning.withValues(alpha: 0.85),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    '⚠️ Compass initialising...',
+                    style: GoogleFonts.inter(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
             ],
           ),
         );
@@ -526,6 +613,7 @@ class _ArScanScreenState extends State<ArScanScreen>
   Widget _buildBottomHud() {
     final nav      = context.watch<NavigationProvider>();
     final pathIds  = widget.pathNodeIds;
+    // graph is used inside _buildPathChips where it is declared
     final progress = pathIds.isEmpty
         ? 0.0
         : (_currentPathIndex / (pathIds.length - 1)).clamp(0.0, 1.0);
@@ -669,8 +757,9 @@ class _ArScanScreenState extends State<ArScanScreen>
   }
 
   Widget _buildPathChips(NavigationProvider nav) {
-    final graph = Provider.of<NavigationProvider>(context, listen: false).graph;
     if (widget.pathNodeIds.isEmpty) return const SizedBox.shrink();
+    // Declare graph here since it's needed for node lookups
+    final graph = widget.isCampusMode ? nav.campusGraph : nav.graph;
 
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
