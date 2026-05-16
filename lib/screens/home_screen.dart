@@ -1,11 +1,17 @@
 // ============================================================
-// RailGuide — Home / Dashboard Screen
+// RailGuide — Home / Dashboard Screen (With Active Module Cards)
 // screens/home_screen.dart
 // ============================================================
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:google_fonts/google_fonts.dart';
+
+// ── Module Navigation Screen Imports ────────────────────────
+import 'navigation_screen.dart';
+import 'navigation/campus_navigation_screen.dart';
+import 'support_screen.dart';
+
 import '../models/train_info.dart';
 import '../providers/auth_provider.dart';
 import '../providers/language_provider.dart';
@@ -27,7 +33,18 @@ class HomeScreen extends StatelessWidget {
         children: [
           _WelcomeBanner(auth: auth),
           const SizedBox(height: 24),
-          _QuickAccessGrid(lang: lang),
+          
+          // ── Module Hub Navigation Section ─────────────────
+          Text(
+            'Select Navigation Mode',
+            style: GoogleFonts.rajdhani(
+              fontSize: 18,
+              fontWeight: FontWeight.w700,
+              color: AppTheme.textPrimary,
+            ),
+          ),
+          const SizedBox(height: 12),
+          _HubNavigationMenu(lang: lang),
           const SizedBox(height: 28),
 
           // ── Train Info section header ─────────────────────
@@ -152,82 +169,123 @@ class _WelcomeBanner extends StatelessWidget {
 }
 
 // ──────────────────────────────────────────────────────────
-// Quick Access Grid
+// Module Hub Navigation Menu
 // ──────────────────────────────────────────────────────────
-class _QuickItem {
-  final String emoji;
-  final String label;
-  final Color color;
-  _QuickItem(this.emoji, this.label, this.color);
-}
-
-class _QuickAccessGrid extends StatelessWidget {
+class _HubNavigationMenu extends StatelessWidget {
   final LanguageProvider lang;
-  const _QuickAccessGrid({required this.lang});
+  const _HubNavigationMenu({required this.lang});
 
   @override
   Widget build(BuildContext context) {
-    final items = [
-      _QuickItem('🚻', 'Washrooms', AppTheme.railwayBlueLight),
-      _QuickItem('🎫', 'Tickets',   AppTheme.railwayBlueMid),
-      _QuickItem('🅿️', 'Parking',  AppTheme.railwayBlue),
-      _QuickItem('🔒', 'Security',  const Color(0xFF374151)),
-    ];
-    return GridView.count(
-      crossAxisCount: 4,
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      mainAxisSpacing: 12,
-      crossAxisSpacing: 12,
-      children: items.map((item) => _QuickAccessTile(item: item)).toList(),
+    return Column(
+      children: [
+        // 1. Campus Mode Card
+        _MenuCard(
+          title: '${lang.t('navigate')} (Campus)',
+          icon: '🎓',
+          color: const Color(0xFF1B6B3A), // collegeGreen accent
+          onTap: () {
+            Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const CampusNavigationScreen()),
+            );
+          },
+        ),
+        const SizedBox(height: 12),
+
+        // 2. Railway Station Mode Card
+        _MenuCard(
+          title: '${lang.t('navigate')} (Station)',
+          icon: '🚉',
+          color: AppTheme.railwayBlue,
+          onTap: () {
+            Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const NavigationScreen()),
+            );
+          },
+        ),
+        const SizedBox(height: 12),
+
+        // 3. Support Card
+        _MenuCard(
+          title: lang.t('support'),
+          icon: '🚨',
+          color: AppTheme.error,
+          onTap: () {
+            Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const SupportScreen()),
+            );
+          },
+        ),
+      ],
     );
   }
 }
 
-class _QuickAccessTile extends StatelessWidget {
-  final _QuickItem item;
-  const _QuickAccessTile({required this.item});
+class _MenuCard extends StatelessWidget {
+  final String title;
+  final String icon;
+  final Color color;
+  final VoidCallback onTap;
+
+  const _MenuCard({
+    required this.title,
+    required this.icon,
+    required this.color,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: () {},
-      child: Container(
-        decoration: BoxDecoration(
-          color: Colors.white,
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
           borderRadius: BorderRadius.circular(16),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.05),
-              blurRadius: 8,
-              offset: const Offset(0, 2),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            child: Row(
+              children: [
+                Container(
+                  width: 44, height: 44,
+                  decoration: BoxDecoration(
+                    color: color.withValues(alpha: 0.10),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Center(
+                    child: Text(icon, style: const TextStyle(fontSize: 22)),
+                  ),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Text(
+                    title,
+                    style: GoogleFonts.inter(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: AppTheme.textPrimary,
+                    ),
+                  ),
+                ),
+                Icon(
+                  Icons.arrow_forward_ios_rounded,
+                  size: 14,
+                  color: color.withValues(alpha: 0.70),
+                ),
+              ],
             ),
-          ],
-        ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              width: 44, height: 44,
-              decoration: BoxDecoration(
-                color: item.color.withValues(alpha: 0.10),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Center(
-                child: Text(item.emoji,
-                    style: const TextStyle(fontSize: 22)),
-              ),
-            ),
-            const SizedBox(height: 6),
-            Text(item.label,
-              style: GoogleFonts.inter(
-                fontSize: 10,
-                fontWeight: FontWeight.w600,
-                color: AppTheme.textSecondary,
-              ),
-              textAlign: TextAlign.center,
-            ),
-          ],
+          ),
         ),
       ),
     );
@@ -260,7 +318,6 @@ class _TrainCard extends StatelessWidget {
       ),
       child: Row(
         children: [
-          // Icon box
           Container(
             width: 48, height: 48,
             decoration: BoxDecoration(
@@ -273,7 +330,6 @@ class _TrainCard extends StatelessWidget {
           ),
           const SizedBox(width: 14),
 
-          // Train name + number
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -293,7 +349,6 @@ class _TrainCard extends StatelessWidget {
             ),
           ),
 
-          // Platform + time + status
           Column(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
