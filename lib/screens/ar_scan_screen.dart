@@ -1,8 +1,9 @@
 // ============================================================
-// RailGuide — AR Scan Screen (Fully Fixed & Error-Free)
+// RailGuide — AR Scan Screen (Direction-Gated Simulation)
 // screens/ar_scan_screen.dart
 // ============================================================
 
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -32,30 +33,29 @@ class ArScanScreen extends StatefulWidget {
 
 class _ArScanScreenState extends State<ArScanScreen>
     with SingleTickerProviderStateMixin {
-  // ── Scanner ───────────────────────────────────────────────
   final MobileScannerController _scanCtrl = MobileScannerController();
   bool _hasScanned = false;
-
-  // ── TTS ───────────────────────────────────────────────────
   final FlutterTts _tts = FlutterTts();
 
-  // ── Path state ────────────────────────────────────────────
   int _currentPathIndex = 0;
   String? _lastScannedId;
 
-  // ── Arrow pulse animation ─────────────────────────────────
   late AnimationController _pulseCtrl;
   late Animation<double>   _pulseAnim;
 
-  // ── HUD display values ────────────────────────────────────
   String _hudDistance    = '---';
   String _hudDirection   = '---';
-  
   String? _currentScannedNodeId;
   String? _nextNodeId;
 
-  // Tracks latest compass reading so TTS can give turn instructions
   double _lastCompassHeading = 0.0;
+
+  // ── Simulation & Live Tracking State ───────────────────────
+  Timer? _simulationTimer;
+  double _currentRemainingDistanceMeters = 0.0;
+  bool _isSimulatingWalk = false;
+  bool _hasSpokenUpcomingTurnAlert = false;
+  String _upcomingTurnInstructionKey = '';
 
   @override
   void initState() {
@@ -71,9 +71,8 @@ class _ArScanScreenState extends State<ArScanScreen>
       CurvedAnimation(parent: _pulseCtrl, curve: Curves.easeInOut),
     );
 
-    // FIX line 80: Guarded BuildContext across async gaps with mounted check
     Future.delayed(const Duration(milliseconds: 800), () {
-      if (!mounted) return; 
+      if (!mounted) return;
       final lang = context.read<LanguageProvider>();
       _speak(lang.t('scan_qr'));
     });
@@ -100,13 +99,13 @@ class _ArScanScreenState extends State<ArScanScreen>
 
   @override
   void dispose() {
+    _simulationTimer?.cancel();
     _scanCtrl.dispose();
     _tts.stop();
     _pulseCtrl.dispose();
     super.dispose();
   }
 
-  // ── QR Detection ─────────────────────────────────────────
   void _onDetect(BarcodeCapture capture) {
     if (_hasScanned) return;
     final value = capture.barcodes.firstOrNull?.rawValue?.trim();
@@ -124,7 +123,11 @@ class _ArScanScreenState extends State<ArScanScreen>
 
     final idx = widget.pathNodeIds.indexOf(scannedNode.id);
     if (idx != -1) {
-      setState(() => _currentPathIndex = idx);
+      setState(() {
+        _currentPathIndex = idx;
+        _isSimulatingWalk = false;
+        _simulationTimer?.cancel();
+      });
     }
 
     _updateHudAndSpeak(scannedNode, nav);
@@ -140,13 +143,18 @@ class _ArScanScreenState extends State<ArScanScreen>
     final graph = widget.isCampusMode ? nav.campusGraph : nav.graph;
     final lang = context.read<LanguageProvider>();
 
-    setState(() => _currentScannedNodeId = current.id);
+    setState(() {
+      _currentScannedNodeId = current.id;
+      _hasSpokenUpcomingTurnAlert = false;
+      _upcomingTurnInstructionKey = '';
+    });
 
     if (curIdx == -1 || curIdx >= pathIds.length - 1) {
       setState(() {
         _hudDistance  = '0 m';
         _hudDirection = '🎯';
         _nextNodeId   = 'destination_reached';
+        _currentRemainingDistanceMeters = 0.0;
       });
       _speak(lang.t('destination_reached_tts'));
       return;
@@ -161,29 +169,120 @@ class _ArScanScreenState extends State<ArScanScreen>
     );
 
     final dir = DirectionalHelper.compassLabel(
-      currentX: current.coordinate.dx,
-      currentY: current.coordinate.dy,
-      targetX:  nextNode.coordinate.dx,
-      targetY:  nextNode.coordinate.dy,
+      currentX: current.coordinate.dx, currentY: current.coordinate.dy,
+      targetX:  nextNode.coordinate.dx,  targetY:  nextNode.coordinate.dy,
     );
 
+    if (curIdx + 2 < pathIds.length) {
+      final lookAheadNode = graph.nodes[pathIds[curIdx + 2]];
+      if (lookAheadNode != null) {
+        final currentSegmentBearing = DirectionalHelper.absoluteBearing(
+          currentX: current.coordinate.dx, currentY: current.coordinate.dy,
+          targetX: nextNode.coordinate.dx,  targetY: nextNode.coordinate.dy,
+        );
+        
+        _upcomingTurnInstructionKey = DirectionalHelper.turnInstruction(
+          compassHeadingDeg: currentSegmentBearing,
+          currentX: nextNode.coordinate.dx,     currentY: nextNode.coordinate.dy,
+          targetX: lookAheadNode.coordinate.dx, targetY: lookAheadNode.coordinate.dy,
+        );
+      }
+    }
+
     setState(() {
+      _currentRemainingDistanceMeters = dist;
       _hudDistance  = DirectionalHelper.hudDistance(dist);
       _hudDirection = dir;
       _nextNodeId   = nextNode.id;
     });
 
-    // FIX lines 182-184: Reverted back to correct named parameters and translated them on the fly
     final instruction = DirectionalHelper.buildTtsInstruction(
       currentNodeName:   lang.t(current.id),
       nextNodeName:      lang.t(nextNode.id),
-      currentX:          current.coordinate.dx,
-      currentY:          current.coordinate.dy,
-      targetX:           nextNode.coordinate.dx,
-      targetY:           nextNode.coordinate.dy,
+      currentX:          current.coordinate.dx,  currentY: current.coordinate.dy,
+      targetX:           nextNode.coordinate.dx, targetY:  nextNode.coordinate.dy,
       compassHeadingDeg: _lastCompassHeading,
     );
     _speak(instruction);
+  }
+
+  // ── FIXED: Direction-Gated Movement Ticker ────────────────
+  void _startLiveWalkSimulation() {
+    if (_currentRemainingDistanceMeters <= 0) return;
+
+    setState(() => _isSimulatingWalk = true);
+    _simulationTimer?.cancel();
+
+    final nav = context.read<NavigationProvider>();
+    final graph = widget.isCampusMode ? nav.campusGraph : nav.graph;
+    final pathIds = widget.pathNodeIds;
+
+    _simulationTimer = Timer.periodic(const Duration(milliseconds: 500), (timer) {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+
+      if (_currentPathIndex >= pathIds.length - 1) {
+        timer.cancel();
+        setState(() => _isSimulatingWalk = false);
+        return;
+      }
+
+      final cur  = graph.nodes[pathIds[_currentPathIndex]];
+      final next = graph.nodes[pathIds[_currentPathIndex + 1]];
+      if (cur == null || next == null) {
+        timer.cancel();
+        setState(() => _isSimulatingWalk = false);
+        return;
+      }
+
+      // 1. Find the path vector absolute target bearing
+      final targetBearing = DirectionalHelper.absoluteBearing(
+        currentX: cur.coordinate.dx, currentY: cur.coordinate.dy,
+        targetX:  next.coordinate.dx, targetY:  next.coordinate.dy,
+      );
+
+      // 2. Compute angular deviation between user facing vs target path heading
+      double diff = targetBearing - _lastCompassHeading;
+      diff = ((diff + 180) % 360) - 180; // Normalise to -180..+180
+
+      // 3. ✅ DIRECTION LOCK GATE: Only decrease distance if user aligns within a 35° cone of the arrow
+      if (diff.abs() <= 35.0) {
+        setState(() {
+          _currentRemainingDistanceMeters -= 2.0; // Deduct simulated meters forward
+          if (_currentRemainingDistanceMeters < 0) _currentRemainingDistanceMeters = 0;
+          _hudDistance = DirectionalHelper.hudDistance(_currentRemainingDistanceMeters);
+        });
+
+        final lang = context.read<LanguageProvider>();
+
+        // Lookahead Proactive Announcement Check
+        if (_currentRemainingDistanceMeters <= 12.0 && 
+            _currentRemainingDistanceMeters > 5.0 &&
+            !_hasSpokenUpcomingTurnAlert && 
+            _upcomingTurnInstructionKey.isNotEmpty) {
+          
+          _hasSpokenUpcomingTurnAlert = true;
+          final alertText = '${lang.t('in_10_meters')}, ${lang.t(_upcomingTurnInstructionKey)}';
+          _speak(alertText);
+          
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('💡 PROACTIVE ALERT: $alertText', 
+                style: GoogleFonts.inter(fontWeight: FontWeight.bold, color: Colors.black)),
+              backgroundColor: AppTheme.safetyYellow,
+              duration: const Duration(seconds: 3),
+            ),
+          );
+        }
+      }
+
+      if (_currentRemainingDistanceMeters <= 0) {
+        timer.cancel();
+        setState(() => _isSimulatingWalk = false);
+      }
+    });
   }
 
   double _computeArrowRotationRad(double compassHeading) {
@@ -219,16 +318,23 @@ class _ArScanScreenState extends State<ArScanScreen>
             onDetect: _onDetect,
           ),
           _buildVignette(),
-          Positioned(
-            top: 0, left: 0, right: 0,
-            child: _buildTopBar(),
-          ),
+          Positioned(top: 0, left: 0, right: 0, child: _buildTopBar()),
           Center(child: _buildScanFrame()),
           Center(child: _buildDirectionalArrow()),
-          Positioned(
-            bottom: 0, left: 0, right: 0,
-            child: _buildBottomHud(),
-          ),
+          Positioned(bottom: 0, left: 0, right: 0, child: _buildBottomHud()),
+          
+          // 🚶‍♂️ Dynamic Simulation Toggle Button
+          if (_currentRemainingDistanceMeters > 5 && !_isSimulatingWalk)
+            Positioned(
+              right: 20, bottom: 240,
+              child: FloatingActionButton.extended(
+                backgroundColor: AppTheme.success,
+                onPressed: _startLiveWalkSimulation,
+                icon: const Icon(Icons.directions_walk_rounded, color: Colors.white),
+                label: Text('Simulate Walk', style: GoogleFonts.inter(fontWeight: FontWeight.bold, color: Colors.white)),
+              ),
+            ),
+
           if (_hasScanned)
             Positioned.fill(
               child: IgnorePointer(
@@ -251,17 +357,14 @@ class _ArScanScreenState extends State<ArScanScreen>
           gradient: RadialGradient(
             center: Alignment.center,
             radius: 1.2,
-            colors: [
-              Colors.transparent,
-              Colors.black.withValues(alpha: 0.55),
-            ],
+            colors: [Colors.transparent, Colors.black.withValues(alpha: 0.55)],
           ),
         ),
       ),
     );
   }
 
-Widget _buildTopBar() {
+  Widget _buildTopBar() {
     final lang = context.watch<LanguageProvider>();
     final currentVisibleNode = _currentScannedNodeId != null
         ? lang.t(_currentScannedNodeId!)
@@ -278,7 +381,6 @@ Widget _buildTopBar() {
         ),
         child: Row(
           children: [
-            // Back button (Fixed size)
             GestureDetector(
               onTap: () => Navigator.of(context).pop(),
               child: Container(
@@ -291,8 +393,6 @@ Widget _buildTopBar() {
               ),
             ),
             const SizedBox(width: 12),
-
-            // ✅ FIXED: Wrapped in Expanded to prevent right horizontal layout overflows
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -300,28 +400,20 @@ Widget _buildTopBar() {
                 children: [
                   Text(
                     widget.isCampusMode ? '${lang.t('navigate')} (Campus)' : '${lang.t('navigate')} (Station)',
-                    style: GoogleFonts.rajdhani(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w700,
-                      color: Colors.white,
-                    ),
-                    overflow: TextOverflow.ellipsis, // Gracefully handles tight widths
+                    style: GoogleFonts.rajdhani(fontSize: 18, fontWeight: FontWeight.w700, color: Colors.white),
+                    overflow: TextOverflow.ellipsis,
                   ),
                   Text(
                     _currentScannedNodeId == null
                         ? lang.t('scan_qr')
                         : '${lang.t('start_node')}: $currentVisibleNode',
                     style: GoogleFonts.inter(fontSize: 11, color: Colors.white60),
-                    overflow: TextOverflow.ellipsis, // Clips text with '...' if it runs too long
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ],
               ),
             ),
-            
-            // Spacer pushes fixed badges to the absolute right side safely
             const Spacer(),
-
-            // Live indicator (Fixed size)
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
               decoration: BoxDecoration(
@@ -336,14 +428,11 @@ Widget _buildTopBar() {
                     decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle),
                   ),
                   const SizedBox(width: 5),
-                  Text('LIVE',
-                    style: GoogleFonts.inter(fontSize: 10, fontWeight: FontWeight.w800, color: Colors.white)),
+                  Text('LIVE', style: GoogleFonts.inter(fontSize: 10, fontWeight: FontWeight.w800, color: Colors.white)),
                 ],
               ),
             ),
             const SizedBox(width: 8),
-
-            // Flash toggle (Fixed size)
             GestureDetector(
               onTap: _scanCtrl.toggleTorch,
               child: Container(
@@ -423,9 +512,7 @@ Widget _buildTopBar() {
         final rotationRad = _computeArrowRotationRad(heading);
         final bool atDestination = _currentPathIndex >= widget.pathNodeIds.length - 1;
 
-        if (atDestination) {
-          return const SizedBox.shrink();
-        }
+        if (atDestination) return const SizedBox.shrink();
 
         final nav     = context.read<NavigationProvider>();
         final graph   = widget.isCampusMode ? nav.campusGraph : nav.graph;
@@ -437,51 +524,72 @@ Widget _buildTopBar() {
           if (cur != null && next != null) {
             turnLabel = DirectionalHelper.turnInstruction(
               compassHeadingDeg: heading,
-              currentX: cur.coordinate.dx,
-              currentY: cur.coordinate.dy,
-              targetX:  next.coordinate.dx,
-              targetY:  next.coordinate.dy,
+              currentX: cur.coordinate.dx, currentY: cur.coordinate.dy,
+              targetX:  next.coordinate.dx,  targetY:  next.coordinate.dy,
             );
           }
         }
 
         final nextVisibleNode = _nextNodeId != null ? lang.t(_nextNodeId!) : lang.t('scan_qr');
 
+        // Check compass deviation live to toggle indicator designs
+        final currentSegmentBearing = (_currentPathIndex < pathIds.length - 1) 
+            ? DirectionalHelper.absoluteBearing(
+                currentX: graph.nodes[pathIds[_currentPathIndex]]!.coordinate.dx,
+                currentY: graph.nodes[pathIds[_currentPathIndex]]!.coordinate.dy,
+                targetX:  graph.nodes[pathIds[_currentPathIndex + 1]]!.coordinate.dx,
+                targetY:  graph.nodes[pathIds[_currentPathIndex + 1]]!.coordinate.dy,
+              )
+            : 0.0;
+        double diff = currentSegmentBearing - heading;
+        diff = ((diff + 180) % 360) - 180;
+        final bool isFacingCorrectly = diff.abs() <= 35.0;
+
         return Transform.translate(
           offset: const Offset(0, -150),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              // Dynamic Target Banner
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
                 decoration: BoxDecoration(
                   color: Colors.black.withValues(alpha: 0.65),
                   borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: AppTheme.safetyYellow.withValues(alpha: 0.60), width: 1.2),
+                  border: Border.all(
+                    color: isFacingCorrectly ? AppTheme.safetyYellow : AppTheme.error, 
+                    width: 1.2
+                  ),
                 ),
                 child: Text(
                   '${lang.t(_hudDirection)}  →  $nextVisibleNode',
                   style: GoogleFonts.inter(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                    color: AppTheme.safetyYellow,
-                    letterSpacing: 0.8,
+                    fontSize: 11, 
+                    fontWeight: FontWeight.w700, 
+                    color: isFacingCorrectly ? AppTheme.safetyYellow : AppTheme.error, 
+                    letterSpacing: 0.8
                   ),
                 ),
               ),
               const SizedBox(height: 8),
-              if (turnLabel.isNotEmpty)
+              
+              // Proactive Lookahead Turn Alert Badge
+              if (_upcomingTurnInstructionKey.isNotEmpty && _currentRemainingDistanceMeters <= 15)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(color: AppTheme.safetyYellow, borderRadius: BorderRadius.circular(12)),
+                  child: Text(
+                    '⚠️ ${lang.t('in_10_meters')}, ${lang.t(_upcomingTurnInstructionKey).toLowerCase()}',
+                    style: GoogleFonts.inter(fontSize: 11, fontWeight: FontWeight.w800, color: Colors.black),
+                  ),
+                )
+              else if (turnLabel.isNotEmpty)
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-                  decoration: BoxDecoration(
-                    color: AppTheme.railwayBlue.withValues(alpha: 0.80),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Text(
-                    lang.t(turnLabel), 
-                    style: GoogleFonts.inter(fontSize: 10, fontWeight: FontWeight.w600, color: Colors.white),
-                  ),
+                  decoration: BoxDecoration(color: AppTheme.railwayBlue.withValues(alpha: 0.80), borderRadius: BorderRadius.circular(12)),
+                  child: Text(lang.t(turnLabel), style: GoogleFonts.inter(fontSize: 10, fontWeight: FontWeight.w600, color: Colors.white)),
                 ),
+                
               const SizedBox(height: 12),
               Transform.rotate(
                 angle: rotationRad,
@@ -495,14 +603,14 @@ Widget _buildTopBar() {
                         color: AppTheme.railwayBlue.withValues(alpha: 0.35),
                         boxShadow: [
                           BoxShadow(
-                            color: AppTheme.safetyYellow.withValues(alpha: 0.40),
-                            blurRadius: 20,
-                            spreadRadius: 4,
-                          ),
+                            color: isFacingCorrectly ? AppTheme.safetyYellow.withValues(alpha: 0.40) : AppTheme.error.withValues(alpha: 0.30), 
+                            blurRadius: 20, 
+                            spreadRadius: 4
+                          )
                         ],
                       ),
                     ),
-                    const Icon(Icons.navigation_rounded, color: AppTheme.safetyYellow, size: 52),
+                    Icon(Icons.navigation_rounded, color: isFacingCorrectly ? AppTheme.safetyYellow : AppTheme.error, size: 52),
                   ],
                 ),
               ),
@@ -510,14 +618,8 @@ Widget _buildTopBar() {
               if (snapshot.data?.heading == null)
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: AppTheme.warning.withValues(alpha: 0.85),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(
-                    '⚠️ Compass initialising...',
-                    style: GoogleFonts.inter(fontSize: 10, fontWeight: FontWeight.w600, color: Colors.white),
-                  ),
+                  decoration: BoxDecoration(color: AppTheme.warning.withValues(alpha: 0.85), borderRadius: BorderRadius.circular(8)),
+                  child: Text('⚠️ Compass initialising...', style: GoogleFonts.inter(fontSize: 10, fontWeight: FontWeight.w600, color: Colors.white)),
                 ),
             ],
           ),
@@ -541,9 +643,7 @@ Widget _buildTopBar() {
         color: Colors.black.withValues(alpha: 0.75),
         borderRadius: BorderRadius.circular(24),
         border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
-        boxShadow: [
-          BoxShadow(color: Colors.black.withValues(alpha: 0.40), blurRadius: 20, offset: const Offset(0, 8)),
-        ],
+        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.40), blurRadius: 20, offset: const Offset(0, 8))],
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -563,26 +663,11 @@ Widget _buildTopBar() {
               children: [
                 Row(
                   children: [
-                    _HudTile(
-                      icon: Icons.straighten_rounded,
-                      label: lang.t('shortest_path'),
-                      value: _hudDistance,
-                      color: AppTheme.safetyYellow,
-                    ),
+                    _HudTile(icon: Icons.straighten_rounded, label: lang.t('shortest_path'), value: _hudDistance, color: AppTheme.safetyYellow),
                     const SizedBox(width: 10),
-                    _HudTile(
-                      icon: Icons.explore_rounded,
-                      label: lang.t('navigate'),
-                      value: lang.t(_hudDirection), 
-                      color: AppTheme.railwayBlueLight,
-                    ),
+                    _HudTile(icon: Icons.explore_rounded, label: lang.t('navigate'), value: lang.t(_hudDirection), color: AppTheme.railwayBlueLight),
                     const SizedBox(width: 10),
-                    _HudTile(
-                      icon: Icons.pin_drop_rounded,
-                      label: lang.t('step_instructions'),
-                      value: '$stepsLeft left',
-                      color: AppTheme.success,
-                    ),
+                    _HudTile(icon: Icons.pin_drop_rounded, label: lang.t('step_instructions'), value: '$stepsLeft left', color: AppTheme.success),
                   ],
                 ),
                 const SizedBox(height: 12),
@@ -601,20 +686,8 @@ Widget _buildTopBar() {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(
-                              lang.t('select_destination').toUpperCase(),
-                              style: GoogleFonts.inter(
-                                fontSize: 9,
-                                fontWeight: FontWeight.w700,
-                                color: Colors.white38,
-                                letterSpacing: 1.2,
-                              ),
-                            ),
-                            Text(
-                              nextVisibleNode,
-                              style: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.w700, color: Colors.white),
-                              overflow: TextOverflow.ellipsis,
-                            ),
+                            Text(lang.t('select_destination').toUpperCase(), style: GoogleFonts.inter(fontSize: 9, fontWeight: FontWeight.w700, color: Colors.white38, letterSpacing: 1.2)),
+                            Text(nextVisibleNode, style: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.w700, color: Colors.white), overflow: TextOverflow.ellipsis),
                           ],
                         ),
                       ),
@@ -622,10 +695,7 @@ Widget _buildTopBar() {
                         onTap: () => _speakCurrentInstruction(nav),
                         child: Container(
                           padding: const EdgeInsets.all(8),
-                          decoration: BoxDecoration(
-                            color: AppTheme.railwayBlue.withValues(alpha: 0.60),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
+                          decoration: BoxDecoration(color: AppTheme.railwayBlue.withValues(alpha: 0.60), borderRadius: BorderRadius.circular(8)),
                           child: const Icon(Icons.volume_up_rounded, color: Colors.white, size: 18),
                         ),
                       ),
@@ -664,37 +734,19 @@ Widget _buildTopBar() {
                 duration: const Duration(milliseconds: 300),
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                 decoration: BoxDecoration(
-                  color: isCurrent
-                      ? AppTheme.safetyYellow
-                      : isDone
-                          ? AppTheme.success.withValues(alpha: 0.30)
-                          : Colors.white.withValues(alpha: 0.10),
+                  color: isCurrent ? AppTheme.safetyYellow : isDone ? AppTheme.success.withValues(alpha: 0.30) : Colors.white.withValues(alpha: 0.10),
                   borderRadius: BorderRadius.circular(20),
-                  border: Border.all(
-                    color: isCurrent
-                        ? AppTheme.safetyYellow
-                        : isDone
-                            ? AppTheme.success.withValues(alpha: 0.50)
-                            : Colors.white.withValues(alpha: 0.20),
-                  ),
+                  border: Border.all(color: isCurrent ? AppTheme.safetyYellow : isDone ? AppTheme.success.withValues(alpha: 0.50) : Colors.white.withValues(alpha: 0.20)),
                 ),
                 child: Text(
                   '${isDone ? '✓ ' : ''}${node != null ? lang.t(node.id) : nodeId}', 
-                  style: GoogleFonts.inter(
-                    fontSize: 10,
-                    fontWeight: FontWeight.w600,
-                    color: isCurrent ? AppTheme.railwayBlue : Colors.white70,
-                  ),
+                  style: GoogleFonts.inter(fontSize: 10, fontWeight: FontWeight.w600, color: isCurrent ? AppTheme.railwayBlue : Colors.white70),
                 ),
               ),
               if (i < widget.pathNodeIds.length - 1)
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 3),
-                  child: Icon(
-                    Icons.chevron_right_rounded,
-                    color: Colors.white.withValues(alpha: 0.30),
-                    size: 14,
-                  ),
+                  child: Icon(Icons.chevron_right_rounded, color: Colors.white.withValues(alpha: 0.30), size: 14),
                 ),
             ],
           );
@@ -716,70 +768,34 @@ Widget _buildTopBar() {
     final next = graph.nodes[pathIds[_currentPathIndex + 1]];
     if (cur == null || next == null) return;
 
-    // FIX lines 713-715: Reverted parameters back to required ones and passed translated node strings
     final instruction = DirectionalHelper.buildTtsInstruction(
       currentNodeName:   lang.t(cur.id),
       nextNodeName:      lang.t(next.id),
-      currentX:          cur.coordinate.dx,  
-      currentY:          cur.coordinate.dy,
-      targetX:           next.coordinate.dx, 
-      targetY:           next.coordinate.dy,
+      currentX:          cur.coordinate.dx,  currentY: cur.coordinate.dy,
+      targetX:           next.coordinate.dx, targetY:  next.coordinate.dy,
       compassHeadingDeg: _lastCompassHeading,
     );
     _speak(instruction);
   }
 }
 
-// ──────────────────────────────────────────────────────────
-// HUD Tile Widget
-// ──────────────────────────────────────────────────────────
 class _HudTile extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final String value;
-  final Color color;
-
-  const _HudTile({
-    required this.icon,
-    required this.label,
-    required this.value,
-    required this.color,
-  });
+  final IconData icon; final String label; final String value; final Color color;
+  const _HudTile({required this.icon, required this.label, required this.value, required this.color});
 
   @override
   Widget build(BuildContext context) {
     return Expanded(
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
-        decoration: BoxDecoration(
-          color: color.withValues(alpha: 0.12),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: color.withValues(alpha: 0.30)),
-        ),
+        decoration: BoxDecoration(color: color.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(12), border: Border.all(color: color.withValues(alpha: 0.30))),
         child: Column(
           children: [
             Icon(icon, color: color, size: 18),
             const SizedBox(height: 4),
-            Text(
-              label,
-              style: GoogleFonts.inter(
-                fontSize: 8,
-                fontWeight: FontWeight.w700,
-                color: Colors.white38,
-                letterSpacing: 0.8,
-              ),
-              overflow: TextOverflow.ellipsis,
-            ),
+            Text(label, style: GoogleFonts.inter(fontSize: 8, fontWeight: FontWeight.w700, color: Colors.white38, letterSpacing: 0.8), overflow: TextOverflow.ellipsis),
             const SizedBox(height: 2),
-            Text(
-              value,
-              style: GoogleFonts.inter(
-                fontSize: 13,
-                fontWeight: FontWeight.w800,
-                color: color,
-              ),
-              overflow: TextOverflow.ellipsis,
-            ),
+            Text(value, style: GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.w800, color: color), overflow: TextOverflow.ellipsis),
           ],
         ),
       ),
@@ -787,19 +803,9 @@ class _HudTile extends StatelessWidget {
   }
 }
 
-// ──────────────────────────────────────────────────────────
-// Corner accent widget for scan frame
-// ──────────────────────────────────────────────────────────
 class Aligned {
-  final Alignment alignment;
-  final double dx, dy;
-  final bool isTop, isLeft;
-
-  const Aligned({
-    required this.alignment,
-    required this.dx, required this.dy,
-    required this.isTop, required this.isLeft,
-  });
+  final Alignment alignment; final double dx, dy; final bool isTop, isLeft;
+  const Aligned({required this.alignment, required this.dx, required this.dy, required this.isTop, required this.isLeft});
 
   Widget build() {
     return Align(

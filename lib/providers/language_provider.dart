@@ -110,6 +110,8 @@ class LanguageProvider extends ChangeNotifier {
       'toward': 'toward',
       'less_than_one_meter': 'less than one meter',
       'meters': 'meters',
+      'in_10_meters': 'In 10 meters',
+      'then': 'then',
     },
     'hi': {
       'app_title': 'रेलगाइड',
@@ -175,6 +177,8 @@ class LanguageProvider extends ChangeNotifier {
       'toward': 'की ओर',
       'less_than_one_meter': 'एक मीटर से कम',
       'meters': 'मीटर',
+      'in_10_meters': '10 मीटर के बाद',
+      'then': 'फिर',
     },
     'kn': {
       'app_title': 'ರೈಲ್‌ಗೈಡ್',
@@ -240,6 +244,8 @@ class LanguageProvider extends ChangeNotifier {
       'toward': 'ಕಡೆಗೆ',
       'less_than_one_meter': 'ಒಂದು ಮೀಟರ್‌ಗಿಂತ ಕಡಿಮೆ',
       'meters': 'ಮೀಟರ್',
+      'in_10_meters': '10 ಮೀಟರ್‌ಗಳ ನಂತರ',
+      'then': 'ನಂತರ',
     },
   };
 }
