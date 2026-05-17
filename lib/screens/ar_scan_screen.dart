@@ -261,7 +261,7 @@ class _ArScanScreenState extends State<ArScanScreen>
     );
   }
 
-  Widget _buildTopBar() {
+Widget _buildTopBar() {
     final lang = context.watch<LanguageProvider>();
     final currentVisibleNode = _currentScannedNodeId != null
         ? lang.t(_currentScannedNodeId!)
@@ -278,6 +278,7 @@ class _ArScanScreenState extends State<ArScanScreen>
         ),
         child: Row(
           children: [
+            // Back button (Fixed size)
             GestureDetector(
               onTap: () => Navigator.of(context).pop(),
               child: Container(
@@ -290,28 +291,37 @@ class _ArScanScreenState extends State<ArScanScreen>
               ),
             ),
             const SizedBox(width: 12),
-            Column(
-              crossAxisAlignment:  CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // FIX line 303: Switched string compositions to clean string interpolations
-                Text(
-                  widget.isCampusMode ? '${lang.t('navigate')} (Campus)' : '${lang.t('navigate')} (Station)',
-                  style: GoogleFonts.rajdhani(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w700,
-                    color: Colors.white,
+
+            // ✅ FIXED: Wrapped in Expanded to prevent right horizontal layout overflows
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    widget.isCampusMode ? '${lang.t('navigate')} (Campus)' : '${lang.t('navigate')} (Station)',
+                    style: GoogleFonts.rajdhani(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.white,
+                    ),
+                    overflow: TextOverflow.ellipsis, // Gracefully handles tight widths
                   ),
-                ),
-                Text(
-                  _currentScannedNodeId == null
-                      ? lang.t('scan_qr')
-                      : '${lang.t('start_node')}: $currentVisibleNode',
-                  style: GoogleFonts.inter(fontSize: 11, color: Colors.white60),
-                ),
-              ],
+                  Text(
+                    _currentScannedNodeId == null
+                        ? lang.t('scan_qr')
+                        : '${lang.t('start_node')}: $currentVisibleNode',
+                    style: GoogleFonts.inter(fontSize: 11, color: Colors.white60),
+                    overflow: TextOverflow.ellipsis, // Clips text with '...' if it runs too long
+                  ),
+                ],
+              ),
             ),
+            
+            // Spacer pushes fixed badges to the absolute right side safely
             const Spacer(),
+
+            // Live indicator (Fixed size)
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
               decoration: BoxDecoration(
@@ -332,6 +342,8 @@ class _ArScanScreenState extends State<ArScanScreen>
               ),
             ),
             const SizedBox(width: 8),
+
+            // Flash toggle (Fixed size)
             GestureDetector(
               onTap: _scanCtrl.toggleTorch,
               child: Container(
