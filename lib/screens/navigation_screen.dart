@@ -338,7 +338,7 @@ class _DestinationCard extends StatelessWidget {
           ),
           const SizedBox(height: 16),
           DropdownButtonFormField<String>(
-            value: nav.endNode?.id,
+            initialValue: nav.endNode?.id,
             hint: Text(lang.t('select_destination')),
             decoration: InputDecoration(
               prefixIcon: const Icon(Icons.flag_rounded),

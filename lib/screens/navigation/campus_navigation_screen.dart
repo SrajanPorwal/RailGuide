@@ -185,11 +185,11 @@ class _CampusNavigationScreenState extends State<CampusNavigationScreen>
                           if (nav.campusResult != null &&
                               nav.campusResult!.found &&
                               nav.campusResult!.path.length >= 2) {
-                            final start = nav.graph
+                            final start = nav.campusGraph
                                     .nodes[nav.campusResult!.path[0]]
                                     ?.displayName ??
                                 '';
-                            final next = nav.graph
+                            final next = nav.campusGraph
                                     .nodes[nav.campusResult!.path[1]]
                                     ?.displayName ??
                                 '';
