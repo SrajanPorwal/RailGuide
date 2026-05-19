@@ -44,14 +44,14 @@ class CampusGraphFactory {
       'food_court': const StationNode(
         id: 'food_court',
         displayName: 'Food Court',
-        coordinate: Offset(67, 221),
+        coordinate: Offset(-67, 221),
         icon: '🍽️',
         qrCode: 'RNSIT_FOOD',
       ),
       'library': const StationNode(
         id: 'library',
         displayName: 'Library',
-        coordinate: Offset(102, 221),
+        coordinate: Offset(-102, 221),
         icon: '📚',
         qrCode: 'RNSIT_LIBRARY',
       ),

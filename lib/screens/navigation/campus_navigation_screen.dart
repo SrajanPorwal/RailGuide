@@ -900,15 +900,15 @@ class _CampusQrScannerScreenState
     'RNSIT_GATE':       'main_gate',
     'RNSIT_MECH':       'mechanical_block',
     'RNSIT_MBA':        'mba_block',
-    'RNSIT_FOOD1':      'food_court_1',
-    'RNSIT_FOOD2':      'food_court_2',
+    'RNSIT_FOOD':      'food_court',
+    'RNSIT_LIBRARY':      'library',
     'RNSIT_TEMPLE':     'temple_parking',
     // Also accept raw node IDs directly
     'main_gate':        'main_gate',
     'mechanical_block': 'mechanical_block',
     'mba_block':        'mba_block',
-    'food_court_1':     'food_court_1',
-    'food_court_2':     'food_court_2',
+    'food_court':     'food_court',
+    'library':     'library',
     'temple_parking':   'temple_parking',
   };
 
